@@ -160,7 +160,7 @@ Responsibility split:
 Included:
 - platform baseline roles: `ansible_user`, `ntp_conf`, `sssd_conf`
 - infra service roles: `firewall_conf`, `dns_conf`, `haproxy_conf`
-- optional vCenter roles: `vcenter_deploy`, `vcenter_configure`, `vcenter_create_datacenter`, `vcenter_create_clusters`, `vcenter_add_esxi_hosts`, `vcenter_configure_networks`, `vcenter_configure_vds`, `vcenter_configure_vmkernel`, `vcenter_join_esxi_cluster`, `vcenter_configure_clusters`, `vcenter_create_nfs_datastore`, `vcenter_create_vsan_datastore`, `vcenter_configure_templates`, `vcenter_add_licenses`
+- optional vCenter roles: `vcenter_deploy`, `vcenter_configure`, `vcenter_create_datacenter`, `vcenter_create_clusters`, `vcenter_add_esxi_hosts`, `vcenter_configure_networks`, `vcenter_configure_vds`, `vcenter_configure_vmkernel`, `vcenter_join_esxi_cluster`, `vcenter_configure_clusters`, `vcenter_create_nfs_datastore`, `vcenter_create_vsan_datastore`, `vcenter_add_licenses`
 
 Excluded:
 - OKD artifact generation role (`okd_upi_prepare`)
@@ -276,7 +276,6 @@ Roles:
 - `vcenter_configure_clusters`
 - `vcenter_create_nfs_datastore`
 - `vcenter_create_vsan_datastore`
-- `vcenter_configure_templates`
 - `vcenter_add_licenses`
 
 Decision guide:
@@ -464,7 +463,7 @@ HAProxy:
 - Single-network assumptions are embedded in examples and defaults.
 - HAProxy VIP handling assumes predictable interface behavior unless explicitly pinned.
 - vCenter deployment automation is optional and not required for every environment.
-- `vcenter_configure_templates` is currently a stub and intentionally fails if enabled.
+
 
 ## 12. Future Improvements
 - Add stronger preflight coverage for NIC naming and DNS zone authority conflicts.

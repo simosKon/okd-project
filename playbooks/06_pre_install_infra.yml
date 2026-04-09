@@ -28,7 +28,6 @@
         (platform_roles.vcenter_configure_clusters_enabled | default(false)) or
         (platform_roles.vcenter_create_nfs_datastore_enabled | default(false)) or
         (platform_roles.vcenter_create_vsan_datastore_enabled | default(false)) or
-        (platform_roles.vcenter_configure_templates_enabled | default(false)) or
         (platform_roles.vcenter_add_licenses_enabled | default(false))
       }}
     preinfra_vcenter_443_required: "{{ preinfra_any_vcenter_role_enabled and not (platform_roles.vcenter_deploy_enabled | default(false)) }}"

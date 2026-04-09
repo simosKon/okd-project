@@ -65,7 +65,6 @@ platform_roles:
   vcenter_join_esxi_cluster_enabled: false
   vcenter_create_nfs_datastore_enabled: false
   vcenter_create_vsan_datastore_enabled: false
-  vcenter_configure_templates_enabled: false
   vcenter_add_licenses_enabled: false
   nfs_lvm_enabled: false
   nfs_conf_enabled: false

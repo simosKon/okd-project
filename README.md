@@ -185,7 +185,6 @@ ansible-playbook -i inventory.ini playbooks/05_post_install_validation.yml
 - `playbooks/06_pre_install_infra.yml` loads vault vars from `vault_vcenter_deploy.yml` and `vault_ad_connect_user.yml` via `vars_files`.
 - If `platform_roles.vcenter_deploy_enabled=true`, set valid `infrastructure.vcenter.vcsa_ova_file`.
 - If you deploy vCenter to NFS at first bootstrap, datastore must already be pre-mounted on standalone ESXi (`deploy_storage_type: nfs_pre_mounted`).
-- `roles/vcenter_configure_templates` is a stub and must remain disabled unless you implement it.
 - Use `vmware_debug: true` (or `-e vmware_debug=true`) only for troubleshooting to disable `no_log` in vCenter roles.
 
 ## 6. vCenter Component Selection Matrix
