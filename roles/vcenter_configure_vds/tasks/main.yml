@@ -1,0 +1,123 @@
+---
+- name: Validate required vars for vcenter_configure_vds
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+    fail_msg: "Missing required variables for vcenter_configure_vds."
+
+- name: Resolve vDS configuration defaults
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+    vds_cfg: "{{ infrastructure.vcenter.vds | default({}) }}"
+    vds_name: "{{ infrastructure.vcenter.vds.name | default('OKD-VDS') if (infrastructure.vcenter.vds is defined) else 'OKD-VDS' }}"
+    vds_version: "{{ infrastructure.vcenter.vds.version | default('8.0.0') if (infrastructure.vcenter.vds is defined) else '8.0.0' }}"
+    vds_mtu: "{{ (infrastructure.vcenter.vds.mtu | default(1500)) | int if (infrastructure.vcenter.vds is defined) else 1500 }}"
+    vds_uplink_quantity: "{{ (infrastructure.vcenter.vds.uplink_quantity | default(2)) | int if (infrastructure.vcenter.vds is defined) else 2 }}"
+    vds_portgroups: "{{ infrastructure.vcenter.vds.portgroups | default([]) if (infrastructure.vcenter.vds is defined) else [] }}"
+    vds_host_uplinks: "{{ infrastructure.vcenter.vds.host_uplinks | default({}) if (infrastructure.vcenter.vds is defined) else {} }}"
+    vds_vsan_enabled: "{{ (infrastructure.vcenter.networks.vsan.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined) else false }}"
+
+- name: Build default vDS portgroups when not provided
+  ansible.builtin.set_fact:
+    vds_portgroups: >-
+      {{
+        vds_portgroups
+        if (vds_portgroups | length > 0)
+        else (
+          [
+            {'name': 'VM Network', 'vlan_id': 0, 'port_binding': 'static', 'num_ports': 128},
+            {'name': 'vMotion', 'vlan_id': 0, 'port_binding': 'static', 'num_ports': 32}
+          ]
+          + (
+            [{'name': 'vSAN', 'vlan_id': 0, 'port_binding': 'static', 'num_ports': 32}]
+            if vds_vsan_enabled else []
+          )
+        )
+      }}
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create or update vSphere Distributed Switch
+  community.vmware.vmware_dvswitch:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    switch_name: "{{ vds_name }}"
+    version: "{{ vds_version }}"
+    mtu: "{{ vds_mtu }}"
+    uplink_quantity: "{{ vds_uplink_quantity }}"
+    state: present
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create or update distributed portgroups on vDS
+  community.vmware.vmware_dvs_portgroup:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    switch_name: "{{ vds_name }}"
+    portgroup_name: "{{ item.name }}"
+    vlan_id: "{{ (item.vlan_id | default(0)) | int }}"
+    port_binding: "{{ item.port_binding | default('static') }}"
+    num_ports: "{{ (item.num_ports | default(128)) | int }}"
+    state: present
+  loop: "{{ vds_portgroups }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Validate vDS host uplink mapping when provided
+  ansible.builtin.assert:
+    that:
+      - (vds_host_uplinks[item.hostname | default(item.ip)] | default([]) | length) > 0
+    fail_msg: "Missing vDS uplink mapping for host {{ item.hostname | default(item.ip) }} in infrastructure.vcenter.vds.host_uplinks."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: vds_host_uplinks | length > 0
+
+- name: Require vDS host uplink mapping when vDS host attach is enabled
+  ansible.builtin.assert:
+    that:
+      - (vds_host_uplinks | length) > 0
+    fail_msg: >-
+      vDS is enabled but no host uplinks are defined.
+      Set infrastructure.vcenter.vds.host_uplinks for each ESXi host
+      (for example esxi01.lab.local: ['vmnic1','vmnic2']).
+  when: (platform_roles.vcenter_configure_vds_enabled | default(false)) | bool
+
+- name: Attach ESXi hosts to vDS with vmnic uplinks
+  community.vmware.vmware_dvs_host:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    switch_name: "{{ vds_name }}"
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    vmnics: "{{ vds_host_uplinks[item.hostname | default(item.ip)] }}"
+    state: present
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when: vds_host_uplinks | length > 0
+

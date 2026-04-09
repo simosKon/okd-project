@@ -1,0 +1,44 @@
+---
+- name: Create ansible_admin user without password
+  user:
+    name: ansible_admin
+    state: present
+    shell: /bin/bash
+    groups: wheel
+    append: yes
+    create_home: yes
+    password: "*"  # Lock password login to enforce SSH key only
+
+- name: Add SELinux user mapping for ansible_admin (RHEL only)
+  command: semanage login -a -s unconfined_u ansible_admin
+  become: true
+  ignore_errors: true  # In case already exists
+
+- name: Fix SELinux contexts for ansible_admin home
+  command: restorecon -RFv /home/ansible_admin
+  become: true
+
+- name: Create .ssh directory for ansible_admin
+  file:
+    path: /home/ansible_admin/.ssh
+    state: directory
+    owner: ansible_admin
+    group: ansible_admin
+    mode: '0700'
+
+- name: Add authorized_keys for ansible_admin
+  copy:
+    content: "{{ infrastructure.ansible_server.ansible_admin_ssh_key }}"
+    dest: /home/ansible_admin/.ssh/authorized_keys
+    owner: ansible_admin
+    group: ansible_admin
+    mode: '0600'
+
+- name: Add ansible_admin to sudoers with NOPASSWD
+  lineinfile:
+    path: /etc/sudoers
+    state: present
+    regexp: '^ansible_admin'
+    line: 'ansible_admin ALL=(ALL) NOPASSWD: ALL'
+    validate: '/usr/sbin/visudo -cf %s'
+    backup: yes

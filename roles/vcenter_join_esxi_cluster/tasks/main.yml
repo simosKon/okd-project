@@ -1,0 +1,197 @@
+---
+- name: Validate required vars for vcenter_join_esxi_cluster
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+      - infrastructure.esxi is defined
+      - infrastructure.esxi | length > 0
+    fail_msg: "Missing required variables for vcenter_join_esxi_cluster."
+
+- name: Resolve network dependency flags
+  ansible.builtin.set_fact:
+    vmotion_enabled: "{{ (infrastructure.vcenter.networks.vmotion.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined) else false }}"
+    vmotion_vmk_enabled: "{{ (infrastructure.vcenter.networks.vmotion.vmkernel.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else false }}"
+    vmotion_vmk_host_ips: "{{ infrastructure.vcenter.networks.vmotion.vmkernel.host_ips | default({}) if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else {} }}"
+    vsan_enabled: "{{ (infrastructure.vcenter.networks.vsan.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined) else false }}"
+    vsan_vmk_enabled: "{{ (infrastructure.vcenter.networks.vsan.vmkernel.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else false }}"
+    vsan_vmk_host_ips: "{{ infrastructure.vcenter.networks.vsan.vmkernel.host_ips | default({}) if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else {} }}"
+
+- name: Enforce VMkernel role when vMotion or vSAN are enabled
+  ansible.builtin.assert:
+    that:
+      - (platform_roles.vcenter_configure_vmkernel_enabled | default(false)) | bool
+    fail_msg: "vMotion/vSAN are enabled. Set platform_roles.vcenter_configure_vmkernel_enabled=true before joining hosts to cluster."
+  when: vmotion_enabled or vsan_enabled
+
+- name: Ensure vMotion VMkernel is enabled when vMotion is enabled
+  ansible.builtin.assert:
+    that:
+      - vmotion_vmk_enabled
+    fail_msg: "infrastructure.vcenter.networks.vmotion.enabled=true requires infrastructure.vcenter.networks.vmotion.vmkernel.enabled=true."
+  when: vmotion_enabled
+
+- name: Ensure vSAN VMkernel is enabled when vSAN is enabled
+  ansible.builtin.assert:
+    that:
+      - vsan_vmk_enabled
+    fail_msg: "infrastructure.vcenter.networks.vsan.enabled=true requires infrastructure.vcenter.networks.vsan.vmkernel.enabled=true."
+  when: vsan_enabled
+
+- name: Validate vMotion VMkernel host IP mapping before cluster join
+  ansible.builtin.assert:
+    that:
+      - (vmotion_vmk_host_ips[item.hostname | default(item.ip)] | default('')) | length > 0
+    fail_msg: "Missing vMotion VMkernel IP for host {{ item.hostname | default(item.ip) }}."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: vmotion_enabled
+
+- name: Validate vSAN VMkernel host IP mapping before cluster join
+  ansible.builtin.assert:
+    that:
+      - (vsan_vmk_host_ips[item.hostname | default(item.ip)] | default('')) | length > 0
+    fail_msg: "Missing vSAN VMkernel IP for host {{ item.hostname | default(item.ip) }}."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: vsan_enabled
+
+- name: Set cluster join defaults
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+    vcenter_cluster_name: "{{ infrastructure.vcenter.cluster_name | default('OKD') }}"
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create vCenter API session for cluster host lookup
+  ansible.builtin.uri:
+    url: "https://{{ infrastructure.vcenter.ip }}/api/session"
+    method: POST
+    user: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+    status_code: [200, 201]
+  delegate_to: localhost
+  register: vcenter_api_session
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Resolve target cluster id
+  ansible.builtin.uri:
+    url: "https://{{ infrastructure.vcenter.ip }}/api/vcenter/cluster"
+    method: GET
+    validate_certs: false
+    return_content: true
+    status_code: 200
+    headers:
+      vmware-api-session-id: "{{ vcenter_api_session.vmware_api_session_id | default(vcenter_api_session.json | string | regex_replace('^\"|\"$', '')) }}"
+  delegate_to: localhost
+  register: vcenter_clusters_api
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Extract target cluster id
+  ansible.builtin.set_fact:
+    vcenter_target_cluster_id: >-
+      {{
+        (
+          (vcenter_clusters_api.json | default([]))
+          | selectattr('name', 'equalto', vcenter_cluster_name)
+          | map(attribute='cluster')
+          | list
+          | first
+        ) | default('')
+      }}
+
+- name: Read current hosts in target cluster
+  ansible.builtin.uri:
+    url: "https://{{ infrastructure.vcenter.ip }}/api/vcenter/host"
+    method: GET
+    validate_certs: false
+    return_content: true
+    status_code: 200
+    headers:
+      vmware-api-session-id: "{{ vcenter_api_session.vmware_api_session_id | default(vcenter_api_session.json | string | regex_replace('^\"|\"$', '')) }}"
+  delegate_to: localhost
+  register: vcenter_cluster_hosts_api
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when: vcenter_target_cluster_id | length > 0
+
+- name: Build cluster host lookup text
+  ansible.builtin.set_fact:
+    vcenter_cluster_hosts_text: >-
+      {{
+        (
+          (
+            (
+              vcenter_cluster_hosts_api.json.value
+              if (vcenter_cluster_hosts_api.json is mapping and (vcenter_cluster_hosts_api.json.value is defined))
+              else (vcenter_cluster_hosts_api.json | default([]))
+            )
+            | selectattr('cluster', 'defined')
+            | selectattr('cluster', 'equalto', vcenter_target_cluster_id)
+            | map(attribute='name')
+            | map('lower')
+            | list
+          )
+          | join(' ')
+        )
+        if (vcenter_target_cluster_id | length > 0)
+        else ''
+      }}
+
+- name: Initialize ESXi hosts-to-join list
+  ansible.builtin.set_fact:
+    esxi_hosts_to_join_cluster: []
+
+- name: Select ESXi hosts not already in target cluster
+  ansible.builtin.set_fact:
+    esxi_hosts_to_join_cluster: "{{ esxi_hosts_to_join_cluster + [item] }}"
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when:
+    - (vcenter_target_cluster_id | length == 0) or ((item.hostname | default('') | lower) not in vcenter_cluster_hosts_text)
+    - (vcenter_target_cluster_id | length == 0) or ((item.ip | default('') | lower) not in vcenter_cluster_hosts_text)
+
+- name: Report ESXi hosts already in target cluster
+  ansible.builtin.debug:
+    msg: "Skipping cluster join for host already in cluster {{ vcenter_cluster_name }}: {{ item.hostname | default(item.ip) }}"
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: item not in esxi_hosts_to_join_cluster
+
+- name: Join ESXi hosts to target vCenter cluster
+  community.vmware.vmware_host:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter: "{{ vcenter_datacenter_name }}"
+    cluster_name: "{{ vcenter_cluster_name }}"
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    esxi_username: "{{ item.username | default('root') }}"
+    esxi_password: "{{ item.password | default(esxi_password, true) }}"
+    state: present
+  loop: "{{ esxi_hosts_to_join_cluster }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+

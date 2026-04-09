@@ -1,0 +1,60 @@
+﻿global
+  log 127.0.0.1 local2
+  maxconn 4000
+  daemon
+
+defaults
+  log global
+  mode tcp
+  timeout connect 5000
+  timeout client 50000
+  timeout server 50000
+
+listen stats
+  bind *:{{ haproxy.stats_port }}
+  mode http
+  stats enable
+  stats uri /stats
+  stats auth {{ haproxy.stats_user }}:{{ haproxy.stats_password }}
+
+frontend api
+  bind {{ infrastructure.load_balancer_vips[0].ip }}:6443
+  default_backend api_servers
+
+backend api_servers
+  balance roundrobin
+  server bootstrap {{ infrastructure.bootstrap.ip }}:6443 check
+{% for master in infrastructure.master %}
+  server {{ master.hostname.split('.')[0] }} {{ master.ip }}:6443 check
+{% endfor %}
+
+frontend api-int
+  bind {{ infrastructure.load_balancer_vips[0].ip }}:22623
+  default_backend api_int_servers
+
+backend api_int_servers
+  balance roundrobin
+  server bootstrap {{ infrastructure.bootstrap.ip }}:22623 check
+{% for master in infrastructure.master %}
+  server {{ master.hostname.split('.')[0] }} {{ master.ip }}:22623 check
+{% endfor %}
+
+frontend http
+  bind {{ infrastructure.load_balancer_vips[1].ip }}:80
+  default_backend ingress_http
+
+backend ingress_http
+  balance roundrobin
+{% for worker in infrastructure.worker %}
+  server {{ worker.hostname.split('.')[0] }} {{ worker.ip }}:80 check
+{% endfor %}
+
+frontend https
+  bind {{ infrastructure.load_balancer_vips[1].ip }}:443
+  default_backend ingress_https
+
+backend ingress_https
+  balance roundrobin
+{% for worker in infrastructure.worker %}
+  server {{ worker.hostname.split('.')[0] }} {{ worker.ip }}:443 check
+{% endfor %}

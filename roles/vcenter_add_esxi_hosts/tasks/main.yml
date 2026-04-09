@@ -1,0 +1,147 @@
+---
+- name: Validate required vars for vcenter_add_esxi_hosts
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+      - infrastructure.esxi is defined
+      - infrastructure.esxi | length > 0
+    fail_msg: "Missing required variables for vcenter_add_esxi_hosts."
+
+- name: Set role variables for vCenter host add workflow
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create vCenter API session for existing-host lookup
+  ansible.builtin.uri:
+    url: "https://{{ infrastructure.vcenter.ip }}/api/session"
+    method: POST
+    user: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+    status_code: [200, 201]
+  delegate_to: localhost
+  register: vcenter_api_session
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Read existing ESXi hosts from vCenter API
+  ansible.builtin.uri:
+    url: "https://{{ infrastructure.vcenter.ip }}/api/vcenter/host"
+    method: GET
+    validate_certs: false
+    return_content: true
+    status_code: 200
+    headers:
+      vmware-api-session-id: "{{ vcenter_api_session.vmware_api_session_id | default(vcenter_api_session.json | string | regex_replace('^\"|\"$', '')) }}"
+  delegate_to: localhost
+  register: vcenter_hosts_api
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Build structured existing ESXi host lookup
+  ansible.builtin.set_fact:
+    vcenter_existing_host_records: >-
+      {{
+        (
+          vcenter_hosts_api.json.value
+          if (vcenter_hosts_api.json is mapping and (vcenter_hosts_api.json.value is defined))
+          else (vcenter_hosts_api.json | default([]))
+        )
+      }}
+    vcenter_existing_host_names: >-
+      {{
+        (
+          (
+            (
+              vcenter_hosts_api.json.value
+              if (vcenter_hosts_api.json is mapping and (vcenter_hosts_api.json.value is defined))
+              else (vcenter_hosts_api.json | default([]))
+            )
+            | selectattr('name', 'defined')
+            | map(attribute='name')
+            | map('lower')
+            | list
+          )
+          + (
+            (
+              (
+                vcenter_hosts_api.json.value
+                if (vcenter_hosts_api.json is mapping and (vcenter_hosts_api.json.value is defined))
+                else (vcenter_hosts_api.json | default([]))
+              )
+              | selectattr('name', 'defined')
+              | map(attribute='name')
+              | map('lower')
+              | map('regex_replace', '\\..*$', '')
+              | list
+            )
+          )
+        ) | unique
+      }}
+
+- name: Initialize ESXi hosts-to-add list
+  ansible.builtin.set_fact:
+    esxi_hosts_to_add: []
+
+- name: Select ESXi hosts missing from vCenter inventory
+  ansible.builtin.set_fact:
+    esxi_hosts_to_add: "{{ esxi_hosts_to_add + [item] }}"
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when:
+    - (item.hostname | default('') | lower) not in vcenter_existing_host_names
+    - (item.hostname | default('') | lower | regex_replace('\\..*$', '')) not in vcenter_existing_host_names
+    - (item.ip | default('') | lower) not in vcenter_existing_host_names
+
+- name: Report already-registered ESXi hosts skipped by add role
+  ansible.builtin.debug:
+    msg: "Skipping add for already-registered ESXi host: {{ item.hostname | default(item.ip) }}"
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: item not in esxi_hosts_to_add
+
+- name: Add ESXi hosts to vCenter inventory (standalone, not in cluster yet)
+  community.vmware.vmware_host:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter: "{{ vcenter_datacenter_name }}"
+    folder: "/{{ vcenter_datacenter_name }}/host"
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    esxi_username: "{{ item.username | default('root') }}"
+    esxi_password: "{{ item.password | default(esxi_password, true) }}"
+    state: present
+  register: add_esxi_result
+  failed_when: >-
+    (add_esxi_result is failed) and
+    ('already' not in (add_esxi_result.msg | default('') | lower)) and
+    ('managed' not in (add_esxi_result.msg | default('') | lower)) and
+    ('failed to put the host in maintenance mode' not in (add_esxi_result.msg | default('') | lower))
+  changed_when: >-
+    (add_esxi_result is changed) and
+    ('already' not in (add_esxi_result.msg | default('') | lower)) and
+    ('managed' not in (add_esxi_result.msg | default('') | lower))
+  loop: "{{ esxi_hosts_to_add }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"

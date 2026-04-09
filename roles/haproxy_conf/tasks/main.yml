@@ -1,0 +1,83 @@
+﻿---
+- name: Install HAProxy and NetworkManager
+  dnf:
+    name:
+      - haproxy
+      - NetworkManager
+      - policycoreutils-python-utils
+    state: present
+
+- name: Detect active network connections
+  command: nmcli -t -f NAME,DEVICE connection show --active
+  register: nmcli_active
+  changed_when: false
+
+- name: Build active non-loopback connection list
+  set_fact:
+    active_connections: "{{ nmcli_active.stdout_lines | reject('search', ':lo$') | list }}"
+
+- name: Select requested connection when interface override is set
+  set_fact:
+    haproxy_conn_line: "{{ (active_connections | select('search', ':' + infrastructure.haproxy_server.interface + '$') | list | first) }}"
+  when: infrastructure.haproxy_server.interface is defined and infrastructure.haproxy_server.interface | length > 0
+
+- name: Fallback to first active connection when no interface override is set
+  set_fact:
+    haproxy_conn_line: "{{ active_connections | first }}"
+  when: haproxy_conn_line is not defined
+
+- name: Ensure a valid active connection was found
+  assert:
+    that:
+      - haproxy_conn_line is defined
+      - haproxy_conn_line | length > 0
+    fail_msg: "No active non-loopback NetworkManager connection found for HAProxy host."
+
+- name: Set connection name
+  set_fact:
+    haproxy_conn: "{{ haproxy_conn_line.split(':')[0] }}"
+
+- name: Get currently configured IPv4 addresses for connection
+  command: nmcli -g ipv4.addresses connection show "{{ haproxy_conn }}"
+  register: nmcli_ipv4_addresses
+  changed_when: false
+
+- name: Build existing IPv4 list
+  set_fact:
+    existing_ipv4_addresses: "{{ (nmcli_ipv4_addresses.stdout | trim | default('')) | split(',') | map('trim') | reject('equalto', '') | list }}"
+    api_vip_cidr: "{{ infrastructure.load_balancer_vips[0].ip }}/32"
+    ingress_vip_cidr: "{{ infrastructure.load_balancer_vips[1].ip }}/32"
+
+- name: Add API VIP if missing
+  command: nmcli connection modify "{{ haproxy_conn }}" +ipv4.addresses "{{ api_vip_cidr }}"
+  when: api_vip_cidr not in existing_ipv4_addresses
+
+- name: Add Ingress VIP if missing
+  command: nmcli connection modify "{{ haproxy_conn }}" +ipv4.addresses "{{ ingress_vip_cidr }}"
+  when: ingress_vip_cidr not in existing_ipv4_addresses
+
+- name: Bring connection up
+  command: nmcli connection up "{{ haproxy_conn }}"
+
+- name: Configure SELinux ports
+  shell: |
+    semanage port -l | grep -q ':6443' || semanage port -a -t http_port_t -p tcp 6443
+    semanage port -l | grep -q ':22623' || semanage port -a -t http_port_t -p tcp 22623
+  changed_when: false
+
+- name: Deploy haproxy.cfg
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+    validate: haproxy -f %s -c
+  notify: restart haproxy
+
+- name: Start and enable haproxy
+  systemd:
+    name: haproxy
+    state: started
+    enabled: yes

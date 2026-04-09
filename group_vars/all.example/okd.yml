@@ -1,0 +1,31 @@
+infrastructure_okd:
+  load_balancer_vips:
+    - ip: "10.0.10.50"
+      name: "api.okd.example.local"
+    - ip: "10.0.10.51"
+      name: "apps.okd.example.local"
+
+  bootstrap:
+    ip: "10.0.10.30"
+    hostname: "bootstrap.okd.example.local"
+
+  master:
+    - ip: "10.0.10.31"
+      hostname: "master01.okd.example.local"
+    - ip: "10.0.10.32"
+      hostname: "master02.okd.example.local"
+    - ip: "10.0.10.33"
+      hostname: "master03.okd.example.local"
+
+  worker:
+    - ip: "10.0.10.34"
+      hostname: "worker01.okd.example.local"
+
+okd:
+  cluster_name: "okd"
+  base_domain: "example.local"
+  version: "4.18.0-okd-scos.10"
+  install_dir: "{{ ansible_env.HOME }}/okd-install"
+  tools_dir: "{{ ansible_env.HOME }}/okd-tools"
+  ssh_public_key: ""
+  pull_secret: '{"auths":{"fake":{"auth":"aWQ6cGFzcwo="}}}'

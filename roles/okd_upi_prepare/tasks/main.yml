@@ -1,0 +1,154 @@
+﻿---
+- name: Set OKD tools paths
+  set_fact:
+    okd_tools_dir: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
+    openshift_install_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/openshift-install' }}"
+    oc_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/oc' }}"
+    kubectl_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/kubectl' }}"
+
+- name: Ensure OKD tools directory exists
+  file:
+    path: "{{ okd_tools_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Check if openshift-install already exists
+  stat:
+    path: "{{ openshift_install_bin }}"
+  register: openshift_install_stat
+
+- name: Check if oc already exists
+  stat:
+    path: "{{ oc_bin }}"
+  register: oc_stat
+
+- name: Download openshift-install archive
+  get_url:
+    url: "https://github.com/okd-project/okd/releases/download/{{ okd.version }}/openshift-install-linux-{{ okd.version }}.tar.gz"
+    dest: "{{ okd_tools_dir }}/openshift-install-linux-{{ okd.version }}.tar.gz"
+    mode: "0644"
+  when: not openshift_install_stat.stat.exists
+
+- name: Download openshift-client archive
+  get_url:
+    url: "https://github.com/okd-project/okd/releases/download/{{ okd.version }}/openshift-client-linux-{{ okd.version }}.tar.gz"
+    dest: "{{ okd_tools_dir }}/openshift-client-linux-{{ okd.version }}.tar.gz"
+    mode: "0644"
+  when: not oc_stat.stat.exists
+
+- name: Extract openshift-install
+  unarchive:
+    src: "{{ okd_tools_dir }}/openshift-install-linux-{{ okd.version }}.tar.gz"
+    dest: "{{ okd_tools_dir }}"
+    remote_src: true
+  when: not openshift_install_stat.stat.exists
+
+- name: Extract openshift-client
+  unarchive:
+    src: "{{ okd_tools_dir }}/openshift-client-linux-{{ okd.version }}.tar.gz"
+    dest: "{{ okd_tools_dir }}"
+    remote_src: true
+  when: not oc_stat.stat.exists
+
+- name: Ensure OKD binaries are executable
+  file:
+    path: "{{ item }}"
+    mode: "0755"
+    state: file
+  loop:
+    - "{{ openshift_install_bin }}"
+    - "{{ oc_bin }}"
+    - "{{ kubectl_bin }}"
+
+- name: Install global symlinks for OKD binaries
+  become: true
+  file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - { src: "{{ openshift_install_bin }}", dest: "/usr/local/bin/openshift-install" }
+    - { src: "{{ oc_bin }}", dest: "/usr/local/bin/oc" }
+    - { src: "{{ kubectl_bin }}", dest: "/usr/local/bin/kubectl" }
+
+- name: Verify openshift-install is available
+  command: "{{ openshift_install_bin }} version"
+  register: installer_check
+  changed_when: false
+
+- name: Ensure install dir exists
+  file:
+    path: "{{ okd.install_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Validate pull secret is set
+  assert:
+    that:
+      - okd.pull_secret is string
+      - okd.pull_secret | length > 20
+    fail_msg: "Set okd.pull_secret in group_vars/all.yml before running this playbook."
+
+- name: Validate SSH public key is set
+  assert:
+    that:
+      - okd.ssh_public_key is string
+      - okd.ssh_public_key | length > 20
+    fail_msg: "Set okd.ssh_public_key in group_vars/all.yml before running this playbook."
+
+- name: Render install-config.yaml (UPI platform none)
+  template:
+    src: install-config.yaml.j2
+    dest: "{{ okd.install_dir }}/install-config.yaml"
+    mode: '0600'
+
+- name: Create manifests
+  command: "{{ openshift_install_bin }} create manifests --dir {{ okd.install_dir }}"
+  args:
+    creates: "{{ okd.install_dir }}/manifests/cluster-scheduler-02-config.yml"
+
+- name: Create ignition configs
+  command: "{{ openshift_install_bin }} create ignition-configs --dir {{ okd.install_dir }}"
+  args:
+    creates: "{{ okd.install_dir }}/bootstrap.ign"
+
+- name: Create base64 ignition artifacts
+  shell: |
+    base64 -w0 bootstrap.ign > bootstrap.64
+    base64 -w0 master.ign > master.64
+    base64 -w0 worker.ign > worker.64
+  args:
+    chdir: "{{ okd.install_dir }}"
+
+- name: Read CoreOS stream metadata from openshift-install
+  command: "{{ openshift_install_bin }} coreos print-stream-json"
+  register: coreos_stream_json_raw
+  changed_when: false
+
+- name: Parse CoreOS stream metadata
+  set_fact:
+    coreos_stream_json: "{{ coreos_stream_json_raw.stdout | from_json }}"
+
+- name: Extract VMware OVA URL and checksum from stream metadata
+  set_fact:
+    coreos_vmware_ova_disk: "{{ coreos_stream_json.get('architectures', {}).get('x86_64', {}).get('artifacts', {}).get('vmware', {}).get('formats', {}).get('ova', {}).get('disk', {}) }}"
+    coreos_vmware_ova_url: "{{ coreos_stream_json.get('architectures', {}).get('x86_64', {}).get('artifacts', {}).get('vmware', {}).get('formats', {}).get('ova', {}).get('disk', {}).get('location', 'N/A') }}"
+    coreos_vmware_ova_checksum: "{{ coreos_stream_json.get('architectures', {}).get('x86_64', {}).get('artifacts', {}).get('vmware', {}).get('formats', {}).get('ova', {}).get('disk', {}).get('sha256', coreos_stream_json.get('architectures', {}).get('x86_64', {}).get('artifacts', {}).get('vmware', {}).get('formats', {}).get('ova', {}).get('disk', {}).get('digest', 'N/A')) }}"
+
+- name: Show next steps
+  debug:
+    msg:
+      - "Install dir: {{ okd.install_dir }}"
+      - "Generated file: {{ okd.install_dir }}/install-config.yaml"
+      - "Generated file: {{ okd.install_dir }}/bootstrap.ign"
+      - "Generated file: {{ okd.install_dir }}/master.ign"
+      - "Generated file: {{ okd.install_dir }}/worker.ign"
+      - "Generated file: {{ okd.install_dir }}/bootstrap.64"
+      - "Generated file: {{ okd.install_dir }}/master.64"
+      - "Generated file: {{ okd.install_dir }}/worker.64"
+      - "CoreOS VMware OVA URL for OKD {{ okd.version }}: {{ coreos_vmware_ova_url }}"
+      - "CoreOS VMware OVA checksum (stream metadata): {{ coreos_vmware_ova_checksum }}"
+      - "Next: run terraform plan/apply from terraform/ using the generated *.64 files"
+      - "Then monitor bootstrap: {{ openshift_install_bin }} --dir {{ okd.install_dir }} wait-for bootstrap-complete --log-level=debug"
+      - "After bootstrap: ansible-playbook playbooks/03_post_bootstrap_haproxy.yml"

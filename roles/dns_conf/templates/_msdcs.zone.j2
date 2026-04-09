@@ -1,0 +1,28 @@
+{% set dns_host = infrastructure.dns_server.hostname | default('dns') %}
+{% set ad_host = infrastructure.ad_server.hostname | default('ad') %}
+{% set dns_fqdn = (dns_host if '.' in dns_host else dns_host ~ '.' ~ network.domain) ~ '.' %}
+{% set ad_fqdn = (ad_host if '.' in ad_host else ad_host ~ '.' ~ network.domain) ~ '.' %}
+$TTL 86400
+@ IN SOA {{ dns_fqdn }} admin.{{ network.domain }}. (
+  {{ ansible_date_time.epoch }} ; serial
+  3600 ; refresh
+  1800 ; retry
+  604800 ; expire
+  86400 ; minimum
+)
+
+@ IN NS {{ dns_fqdn }}
+
+; LDAP service
+_ldap._tcp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 389 {{ ad_fqdn }}
+
+; Global Catalog
+_gc._tcp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 3268 {{ ad_fqdn }}
+
+; Kerberos
+_kerberos._tcp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 88 {{ ad_fqdn }}
+_kerberos._udp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 88 {{ ad_fqdn }}
+
+; Kpasswd
+_kpasswd._tcp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 464 {{ ad_fqdn }}
+_kpasswd._udp.dc._msdcs.{{ network.domain }}. IN SRV 0 100 464 {{ ad_fqdn }}

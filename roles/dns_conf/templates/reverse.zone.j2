@@ -1,0 +1,57 @@
+{% set infra = dns_infra %}
+{% set dns_host = infra.dns_server.hostname | default('dns.' ~ network.domain) %}
+{% set dns_fqdn = (dns_host if '.' in dns_host else dns_host ~ '.' ~ network.domain) ~ '.' %}
+{% set reverse_zone = network.base | regex_replace('^([0-9]+)\.([0-9]+)\.([0-9]+)$', '\\3.\\2.\\1') ~ '.in-addr.arpa' %}
+$ORIGIN .
+$TTL 86400
+{{ reverse_zone }} IN SOA {{ dns_fqdn }} admin.{{ network.domain }}. (
+  {{ ansible_date_time.epoch }} ; serial
+  3600 ; refresh
+  1800 ; retry
+  1209600 ; expire
+  86400 ; minimum
+)
+            NS {{ dns_fqdn }}
+
+$ORIGIN {{ reverse_zone }}.
+{% if infra.vcenter is defined and infra.vcenter.ip is defined and infra.vcenter.hostname is defined %}
+{{ infra.vcenter.ip.split('.')[-1] }}        PTR {{ infra.vcenter.hostname }}.
+{% endif %}
+{% for esxi in dns_esxi_records %}
+{{ esxi.ip.split('.')[-1] }}        PTR {{ esxi.hostname }}.
+{% endfor %}
+{% if infra.ansible_server is defined and infra.ansible_server.ip is defined and infra.ansible_server.hostname is defined %}
+{{ infra.ansible_server.ip.split('.')[-1] }}        PTR {{ infra.ansible_server.hostname }}.
+{% endif %}
+$TTL 1200
+{% if infra.ad_server is defined and infra.ad_server.ip is defined and infra.ad_server.hostname is defined %}
+{{ infra.ad_server.ip.split('.')[-1] }}        PTR {{ infra.ad_server.hostname }}.
+{% endif %}
+$TTL 86400
+{% if infra.haproxy_server is defined and infra.haproxy_server.ip is defined and infra.haproxy_server.hostname is defined %}
+{{ infra.haproxy_server.ip.split('.')[-1] }}        PTR {{ infra.haproxy_server.hostname }}.
+{% endif %}
+{% if infra.dns_server is defined and infra.dns_server.ip is defined and infra.dns_server.hostname is defined %}
+{{ infra.dns_server.ip.split('.')[-1] }}         PTR {{ infra.dns_server.hostname }}.
+{% endif %}
+{% if infra.nfs_server is defined and infra.nfs_server.ip is defined and infra.nfs_server.hostname is defined %}
+{{ infra.nfs_server.ip.split('.')[-1] }}         PTR {{ infra.nfs_server.hostname }}.
+{% endif %}
+{% if infra.bootstrap is defined and infra.bootstrap.ip is defined and infra.bootstrap.hostname is defined %}
+{{ infra.bootstrap.ip.split('.')[-1] }}        PTR {{ infra.bootstrap.hostname }}.
+{% endif %}
+{% for master in infra.master | default([]) %}
+{{ master.ip.split('.')[-1] }}        PTR {{ master.hostname }}.
+{% endfor %}
+{% for worker in infra.worker | default([]) %}
+{{ worker.ip.split('.')[-1] }}        PTR {{ worker.hostname }}.
+{% endfor %}
+{% if infra.load_balancer_vips is defined and (infra.load_balancer_vips | length) > 0 %}
+{{ infra.load_balancer_vips[0].ip.split('.')[-1] }}        PTR {{ infra.load_balancer_vips[0].name }}.
+{% endif %}
+{% if infra.load_balancer_vips is defined and (infra.load_balancer_vips | length) > 1 %}
+{{ infra.load_balancer_vips[1].ip.split('.')[-1] }}        PTR {{ infra.load_balancer_vips[1].name }}.
+{% endif %}
+{% if infra.witness is defined and infra.witness.ip is defined and infra.witness.hostname is defined %}
+{{ infra.witness.ip.split('.')[-1] }}        PTR {{ infra.witness.hostname }}.
+{% endif %}

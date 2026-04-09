@@ -1,0 +1,48 @@
+flowchart TB
+
+    subgraph VMware_Workstation
+        DNS["DNS VM"]
+        NFS["NFS VM (Persistent Storage)"]
+        Ansible["Ansible Control Node"]
+    end
+
+    subgraph vSphere
+        vCenter["vCenter Server"]
+
+        subgraph Cluster
+            ESXi01["ESXi Host 01"]
+            ESXi02["ESXi Host 02"]
+        end
+    end
+
+    subgraph OKD_Cluster
+        HAProxy["HAProxy VM - Terraform Provisioned"]
+
+        Bootstrap["Bootstrap Node (temporary)"]
+        Master1["Master 1"]
+        Master2["Master 2"]
+        Master3["Master 3"]
+
+        Worker1["Worker 1"]
+    end
+
+    Ansible -->|"Ansible + community.vmware"| vCenter
+    DNS -->|"DNS forward/reverse records"| vCenter
+    vCenter --> ESXi01
+    vCenter --> ESXi02
+
+    NFS -->|"NFS Datastore"| ESXi01
+    NFS -->|"NFS Datastore"| ESXi02
+
+    DNS --> HAProxy
+    DNS --> Bootstrap
+    DNS --> Master1
+    DNS --> Master2
+    DNS --> Master3
+    DNS --> Worker1
+
+    HAProxy -->|"6443 / 22623"| Master1
+    HAProxy --> Master2
+    HAProxy --> Master3
+
+    HAProxy -->|"80 / 443"| Worker1

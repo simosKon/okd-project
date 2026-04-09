@@ -1,0 +1,112 @@
+﻿---
+- name: Remove bootstrap from HAProxy after bootstrap-complete
+  hosts: haproxy
+  become: true
+  tags: [post_bootstrap, haproxy_cleanup]
+  tasks:
+    - name: Remove bootstrap API backend entry
+      lineinfile:
+        path: /etc/haproxy/haproxy.cfg
+        regexp: '^\s*server\s+bootstrap(\.\S+)?\s+{{ infrastructure.bootstrap.ip }}:6443.*$'
+        state: absent
+      tags: [post_bootstrap, haproxy_cleanup, haproxy]
+
+    - name: Remove bootstrap MCS backend entry
+      lineinfile:
+        path: /etc/haproxy/haproxy.cfg
+        regexp: '^\s*server\s+bootstrap(\.\S+)?\s+{{ infrastructure.bootstrap.ip }}:22623.*$'
+        state: absent
+      tags: [post_bootstrap, haproxy_cleanup, haproxy]
+
+    - name: Reload HAProxy
+      systemd:
+        name: haproxy
+        state: reloaded
+      tags: [post_bootstrap, haproxy_cleanup, haproxy]
+
+- name: Approve pending CSRs after bootstrap removal (lab helper)
+  hosts: localhost
+  gather_facts: false
+  tags: [post_bootstrap, csr_approve, known_hosts_cleanup]
+  vars:
+    ssh_known_hosts_cleanup_enabled: true
+    ssh_known_hosts_nodes: "{{ [infrastructure.bootstrap] + (infrastructure.master | default([])) + (infrastructure.worker | default([])) }}"
+    csr_auto_approve_enabled: true
+    csr_approve_retries: 30
+    csr_approve_interval_seconds: 10
+    okd_install_dir_path: "{{ okd.install_dir | default(ansible_env.HOME + '/okd-install') }}"
+    okd_tools_dir_path: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
+    kubeconfig_path: "{{ okd_install_dir_path }}/auth/kubeconfig"
+    oc_bin: "{{ okd_tools_dir_path }}/oc"
+  tasks:
+    - name: Remove stale SSH known_hosts hostname entries for rebuilt OKD nodes
+      known_hosts:
+        name: "{{ item.hostname }}"
+        state: absent
+      loop: "{{ ssh_known_hosts_nodes }}"
+      loop_control:
+        label: "{{ item.hostname | default('no-hostname') }}"
+      when:
+        - ssh_known_hosts_cleanup_enabled | bool
+        - item.hostname is defined
+        - item.hostname | length > 0
+      tags: [post_bootstrap, known_hosts_cleanup]
+
+    - name: Remove stale SSH known_hosts IP entries for rebuilt OKD nodes
+      known_hosts:
+        name: "{{ item.ip }}"
+        state: absent
+      loop: "{{ ssh_known_hosts_nodes }}"
+      loop_control:
+        label: "{{ item.ip | default('no-ip') }}"
+      when:
+        - ssh_known_hosts_cleanup_enabled | bool
+        - item.ip is defined
+        - item.ip | length > 0
+      tags: [post_bootstrap, known_hosts_cleanup]
+
+    - name: Skip CSR auto-approve when disabled
+      debug:
+        msg: "CSR auto-approve is disabled (csr_auto_approve_enabled=false)."
+      when: not csr_auto_approve_enabled | bool
+      tags: [post_bootstrap, csr_approve]
+
+    - name: Verify oc binary exists
+      stat:
+        path: "{{ oc_bin }}"
+      register: oc_bin_stat
+      when: csr_auto_approve_enabled | bool
+      tags: [post_bootstrap, csr_approve]
+
+    - name: Verify kubeconfig exists
+      stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+      when: csr_auto_approve_enabled | bool
+      tags: [post_bootstrap, csr_approve]
+
+    - name: Validate prerequisites for CSR auto-approve
+      assert:
+        that:
+          - oc_bin_stat.stat.exists
+          - kubeconfig_stat.stat.exists
+        fail_msg: "CSR auto-approve requires {{ oc_bin }} and {{ kubeconfig_path }} on control host."
+      when: csr_auto_approve_enabled | bool
+      tags: [post_bootstrap, csr_approve]
+
+    - name: Auto-approve pending CSRs for a limited time window
+      shell: |
+        set -e
+        for i in $(seq 1 {{ csr_approve_retries }}); do
+          pending="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk '$5=="" {print $1}')"
+          if [ -n "$pending" ]; then
+            echo "$pending" | xargs -r {{ oc_bin }} --kubeconfig {{ kubeconfig_path }} adm certificate approve
+          fi
+          sleep {{ csr_approve_interval_seconds }}
+        done
+      args:
+        executable: /bin/bash
+      register: csr_approve_result
+      changed_when: "'certificatesigningrequest.certificates.k8s.io/' in csr_approve_result.stdout"
+      when: csr_auto_approve_enabled | bool
+      tags: [post_bootstrap, csr_approve]

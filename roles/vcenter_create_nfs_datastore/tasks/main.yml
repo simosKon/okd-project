@@ -1,0 +1,57 @@
+---
+- name: Validate required vars for vcenter_create_nfs_datastore
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default('') | length > 0
+      - infrastructure.nfs_server is defined
+      - infrastructure.nfs_server.ip is defined
+      - infrastructure.esxi is defined
+      - infrastructure.esxi | length > 0
+      - infrastructure.nfs_server.datastore_name is defined
+      - nfs_vm_storage is defined
+      - nfs_vm_storage.export_path is defined
+    fail_msg: "Missing vars for NFS datastore workflow."
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Mount NFS datastore on each ESXi host
+  community.vmware.vmware_host_datastore:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    datastore_name: "{{ infrastructure.nfs_server.datastore_name }}"
+    datastore_type: nfs
+    nfs_server: "{{ infrastructure.nfs_server.ip }}"
+    nfs_path: "{{ nfs_vm_storage.export_path }}"
+    state: present
+  register: nfs_mount_result
+  failed_when: >-
+    (nfs_mount_result is failed) and
+    ('already exists' not in (nfs_mount_result.msg | default('') | lower)) and
+    ('already mounted' not in (nfs_mount_result.msg | default('') | lower))
+  changed_when: >-
+    (nfs_mount_result is changed) and
+    ('already exists' not in (nfs_mount_result.msg | default('') | lower)) and
+    ('already mounted' not in (nfs_mount_result.msg | default('') | lower))
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+

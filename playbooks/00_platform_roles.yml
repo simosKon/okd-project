@@ -1,0 +1,44 @@
+---
+- name: Configure DNS
+  hosts: dns
+  become: true
+  tags: [platform, pre_vcenter, dns]
+  roles:
+    - { role: sub_manager, when: (platform_roles.sub_manager_enabled | default(false)) | bool, tags: [platform, pre_vcenter, sub_manager] }
+    - { role: install_initial_packages, when: (platform_roles.install_initial_packages_enabled | default(false)) | bool, tags: [platform, pre_vcenter, initial_packages] }
+    - { role: firewall_conf, firewall_profile: dns, tags: [platform, pre_vcenter, dns, firewall] }
+    - { role: dns_conf, tags: [platform, pre_vcenter, dns] }
+
+- name: Configure NFS (pre-vCenter)
+  hosts: nfs
+  become: true
+  tags: [platform, pre_vcenter, nfs]
+  roles:
+    - { role: sub_manager, when: (platform_roles.sub_manager_enabled | default(false)) | bool, tags: [platform, pre_vcenter, sub_manager] }
+    - { role: install_initial_packages, when: (platform_roles.install_initial_packages_enabled | default(false)) | bool, tags: [platform, pre_vcenter, initial_packages] }
+    - { role: firewall_conf, firewall_profile: nfs, tags: [platform, pre_vcenter, nfs, firewall] }
+    - { role: lvm_create, when: (platform_roles.nfs_lvm_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs, storage] }
+    - { role: nfs_conf, when: (platform_roles.nfs_conf_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs] }
+
+
+- name: vCenter deployment and post-configuration roles
+  hosts: localhost
+  gather_facts: true
+  tags: [platform, vcenter]
+  vars_files:
+  - ../vault_vcenter_deploy.yml
+  - ../vault_ad_connect_user.yml
+  roles:
+    - { role: vcenter_deploy, when: platform_roles.vcenter_deploy_enabled | bool, tags: [platform, vcenter, vcenter_deploy] }
+    - { role: vcenter_configure, when: platform_roles.vcenter_configure_enabled | bool, tags: [platform, vcenter, vcenter_configure] }
+    - { role: vcenter_create_datacenter, when: platform_roles.vcenter_create_datacenter_enabled | bool, tags: [platform, vcenter, vcenter_create_datacenter] }
+    - { role: vcenter_create_clusters, when: (platform_roles.vcenter_create_clusters_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_clusters] }
+    - { role: vcenter_add_esxi_hosts, when: (platform_roles.vcenter_add_esxi_hosts_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_esxi_hosts] }
+    - { role: vcenter_add_licenses, when: platform_roles.vcenter_add_licenses_enabled | bool, tags: [platform, vcenter, vcenter_add_licenses] }
+    - { role: vcenter_configure_networks, when: ((platform_roles.vcenter_configure_networks_enabled | default(false)) | bool) and not ((platform_roles.vcenter_configure_vds_enabled | default(false)) | bool), tags: [platform, vcenter, vcenter_networks] }
+    - { role: vcenter_configure_vds, when: (platform_roles.vcenter_configure_vds_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_vds] }
+    - { role: vcenter_configure_vmkernel, when: (platform_roles.vcenter_configure_vmkernel_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_vmkernel] }
+    - { role: vcenter_join_esxi_cluster, when: (platform_roles.vcenter_join_esxi_cluster_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_join_esxi_cluster] }
+    - { role: vcenter_configure_clusters, when: (platform_roles.vcenter_configure_clusters_enabled | default(false)) | bool, tags: [platform, vcenter, vcenter_configure_clusters] }
+    - { role: vcenter_create_nfs_datastore, when: ((storage_backend | default('nfs')) == 'nfs') and ((platform_roles.vcenter_create_nfs_datastore_enabled | default(false)) | bool), tags: [platform, vcenter, vcenter_nfsdatastore] }
+    - { role: vcenter_create_vsan_datastore, when: ((storage_backend | default('nfs')) == 'vsan') and ((platform_roles.vcenter_create_vsan_datastore_enabled | default(false)) | bool), tags: [platform, vcenter, vcenter_vsandatastore] }

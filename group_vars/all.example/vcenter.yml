@@ -1,0 +1,112 @@
+infrastructure_vcenter:
+  vcenter:
+    ip: "10.0.10.100"
+    hostname: "vcenter.example.local"
+    name: "vcenter"
+    # initial vCenter deployment target storage:
+    # - local_esxi: deploy on standalone ESXi local datastore (default/recommended bootstrap path)
+    # - nfs_pre_mounted: deploy on NFS datastore that is already mounted on standalone ESXi before automation
+    deploy_storage_type: "local_esxi"
+    datacenter_name: "LabDatacenter"  # used by cluster/host/datastore vCenter roles
+    cluster_name: "OKD"               # used by cluster/host/datastore vCenter roles
+    cluster_drs_enabled: true
+    cluster_ha_enabled: false
+    cluster_drs_vmotion_rate: 3
+    cluster_drs_default_vm_behavior: "fullyAutomated"
+    networks:
+      vm_network:
+        name: "VM Network"
+        vswitch: "vSwitch0"
+        vlan_id: 0
+      vmotion:
+        enabled: false
+        portgroup: "vMotion"
+        vswitch: "vSwitch0"
+        vlan_id: 0
+        vmkernel:
+          enabled: false
+          vmk_name: "vmk1"
+          mtu: 9000
+          netmask: "255.255.255.0"
+          gateway: ""
+          # sample per-host IP plan (adjust to your lab)
+          host_ips:
+            esxi01.example.local: "10.0.20.11"
+            esxi02.example.local: "10.0.20.12"
+      vsan:
+        enabled: false
+        portgroup: "vSAN"
+        vswitch: "vSwitch0"
+        vlan_id: 0
+        vmkernel:
+          enabled: false
+          vmk_name: "vmk2"
+          mtu: 9000
+          netmask: "255.255.255.0"
+          # vSAN is usually isolated; keep gateway empty by default
+          gateway: ""
+          # sample per-host IP plan (adjust to your lab)
+          host_ips:
+            esxi01.example.local: "10.0.30.11"
+            esxi02.example.local: "10.0.30.12"
+    # optional vDS path (use this when your license supports vDS)
+    # when vcenter_configure_vds_enabled=true, this path is preferred over vcenter_configure_networks
+    vds:
+      name: "OKD-VDS"
+      version: "8.0.0"
+      mtu: 9000
+      uplink_quantity: 2
+      # optional: attach ESXi hosts to vDS with specific vmnics
+      # host_uplinks:
+      #   esxi01.example.local: ["vmnic1", "vmnic2"]
+      #   esxi02.example.local: ["vmnic1", "vmnic2"]
+      portgroups:
+        - name: "VM Network"
+          vlan_id: 0
+          port_binding: "static"
+          num_ports: 256
+        - name: "vMotion"
+          vlan_id: 0
+          port_binding: "static"
+          num_ports: 64
+        - name: "vSAN"
+          vlan_id: 0
+          port_binding: "static"
+          num_ports: 64
+    vsan:
+      datastore_name: "vsanDatastore"
+      auto_claim_storage: false
+      # required for deterministic disk group creation in nested lab
+      # use canonical ESXi disk names (naa.* / eui.*)
+      disk_groups:
+        esxi01.example.local:
+          cache_device: "naa.CACHE_DISK_ESXI01"
+          capacity_devices:
+            - "naa.CAPACITY1_ESXI01"
+            - "naa.CAPACITY2_ESXI01"
+        esxi02.example.local:
+          cache_device: "naa.CACHE_DISK_ESXI02"
+          capacity_devices:
+            - "naa.CAPACITY1_ESXI02"
+            - "naa.CAPACITY2_ESXI02"
+    # optional multi-cluster mode:
+    # clusters:
+    #   - "OKD"
+    vcsa_ova_file: ""  # only for 00_platform_roles.yml (vCenter deploy flow)
+    vcsa_size: "tiny"
+    username: "root"
+    vcenter_license_key: ""
+    esxi_license_key: ""
+
+  esxi:
+    - ip: "10.0.10.101"
+      hostname: "esxi01.example.local"
+      datastore: "VMs"
+      username: "root"
+    - ip: "10.0.10.102"
+      hostname: "esxi02.example.local"
+      datastore: "VMs"
+      username: "root"
+
+
+vmware_debug: false

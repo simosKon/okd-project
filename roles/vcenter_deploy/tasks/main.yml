@@ -1,0 +1,135 @@
+---
+- name: Resolve VCSA deployment network defaults
+  ansible.builtin.set_fact:
+    vcsa_target_portgroup: "{{ infrastructure.vcenter.networks.vm_network.name | default('VM Network') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vm_network is defined) else 'VM Network' }}"
+    vcsa_target_esxi_endpoint: "{{ infrastructure.esxi[0].ip | default(infrastructure.esxi[0].hostname) }}"
+    vcsa_esxi_password: "{{ esxi_password | default(infrastructure.esxi[0].password | default('')) }}"
+    vcsa_vcenter_password: "{{ vcenter_password | default(infrastructure.vcenter.password | default('')) }}"
+
+- name: Pre-deployment validation for VCSA
+  block:
+    - name: Prerequisite for existing infrastructure VMs
+      ansible.builtin.debug:
+        msg: "Prerequisite: Existing infrastructure VMs (for example DNS, AD, NTP) must already be deployed and have static IP addresses configured before running this role."
+
+    - name: Check DNS forward lookup for vCenter hostname
+      command: "nslookup {{ infrastructure.vcenter.hostname }}"
+      register: dns_forward
+      failed_when: dns_forward.rc != 0
+
+    - name: Check DNS reverse lookup for vCenter IP
+      command: "nslookup {{ infrastructure.vcenter.ip }}"
+      register: dns_reverse
+      failed_when: dns_reverse.rc != 0
+
+    - name: Verify NTP sync on ESXi host
+      community.vmware.vmware_host_ntp_info:
+        esxi_hostname: "{{ vcsa_target_esxi_endpoint }}"
+        hostname: "{{ vcsa_target_esxi_endpoint }}"
+        username: "{{ infrastructure.esxi[0].username }}"
+        password: "{{ vcsa_esxi_password }}"
+        validate_certs: false
+      delegate_to: localhost
+      register: ntp_info
+
+    - name: Validate password complexity
+      assert:
+        that:
+          - vcsa_vcenter_password | length >= 8
+          - vcsa_vcenter_password is match(".*[A-Z].*")
+          - vcsa_vcenter_password is match(".*[a-z].*")
+          - vcsa_vcenter_password is match(".*[0-9].*")
+        fail_msg: "Password does not meet complexity requirements"
+
+- name: Deploy VCSA OVF with validation
+  block:
+    - name: Validate datastore exists
+      community.vmware.vmware_datastore_info:
+        hostname: "{{ vcsa_target_esxi_endpoint }}"
+        username: "{{ infrastructure.esxi[0].username }}"
+        password: "{{ vcsa_esxi_password }}"
+        validate_certs: false
+        name: "{{ infrastructure.esxi[0].datastore }}"
+      delegate_to: localhost
+      register: datastore_info
+
+    - name: Deploy VCSA
+      vmware_deploy_ovf:
+        hostname: '{{ vcsa_target_esxi_endpoint }}'
+        username: '{{ infrastructure.esxi[0].username }}'
+        password: '{{ vcsa_esxi_password }}'
+        name: '{{ infrastructure.vcenter.name }}'
+        ovf: '{{ infrastructure.vcenter.vcsa_ova_file }}'
+        
+        datacenter: "ha-datacenter"    
+        power_on: true
+        wait_for_ip_address: true
+        validate_certs: false
+        inject_ovf_env: true
+        datastore: '{{ infrastructure.esxi[0].datastore }}'
+        networks:
+          "Network 1": "{{ vcsa_target_portgroup }}"
+        properties:
+          DeploymentOption.value: '{{ infrastructure.vcenter.vcsa_size }}'
+          guestinfo.cis.appliance.net.addr.family: 'ipv4'
+          guestinfo.cis.appliance.net.mode: 'static'
+          guestinfo.cis.appliance.net.addr: '{{ infrastructure.vcenter.ip }}'
+          guestinfo.cis.appliance.net.pnid: '{{ infrastructure.vcenter.hostname }}'
+          guestinfo.cis.appliance.net.prefix: '{{ network.prefix }}'
+          guestinfo.cis.appliance.net.gateway: '{{ network.gateway }}'
+          guestinfo.cis.appliance.net.dns.servers: '{{ network.dns_servers[0] }}'
+          guestinfo.cis.appliance.root.passwd: '{{ vcsa_vcenter_password }}'
+          guestinfo.cis.ceip_enabled: "False"
+          guestinfo.cis.deployment.autoconfig: 'True'
+          guestinfo.cis.vmdir.password: '{{ vcsa_vcenter_password }}'
+          # Fix for vCenter 8.0.1 installation (First boot issue)
+          guestinfo.cis.upgrade.import.directory.userConfigurable: 'True'
+          guestinfo.cis.upgrade.import.directory: '/storage/seat/cis-export-folder'
+          # ---
+          domain-name: '{{ network.domain }}'
+          searchpath: '{{ network.domain }}'
+      no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+      delegate_to: localhost
+      register: vcsa_deploy
+      failed_when: vcsa_deploy is failed
+
+  rescue:
+    - name: Mark VCSA deployment failure
+      ansible.builtin.set_fact:
+        vcsa_deploy_failed: true
+
+    - name: Hint to enable detailed VCSA deploy errors
+      ansible.builtin.debug:
+        msg:
+          - "VCSA deploy failed with protected output."
+          - "Re-run with -e vmware_debug=true to show full module error details."
+      when: not ((vmware_debug | default(false)) | bool)
+
+    - name: Cleanup failed deployment
+      vmware_guest_powerstate:
+        hostname: '{{ vcsa_target_esxi_endpoint }}'
+        username: '{{ infrastructure.esxi[0].username }}'
+        password: '{{ vcsa_esxi_password }}'
+        name: '{{ infrastructure.vcenter.name }}'
+        state: powered-off
+        validate_certs: false
+      delegate_to: localhost
+      ignore_errors: true
+
+    - name: Stop role after failed VCSA deploy
+      ansible.builtin.fail:
+        msg: "VCSA deployment failed. Re-run with -e vmware_debug=true to see the exact module error."
+
+- name: Wait for vCenter readiness
+  community.vmware.vmware_about_info:
+    hostname: '{{ infrastructure.vcenter.ip }}'
+    username: 'administrator@vsphere.local'
+    password: '{{ vcsa_vcenter_password }}'
+    validate_certs: no
+  delegate_to: localhost
+  register: vcenter_facts
+  retries: 20
+  delay: 60
+  until: vcenter_facts is succeeded
+  when: not (vcsa_deploy_failed | default(false))
+

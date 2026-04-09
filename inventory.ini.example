@@ -1,0 +1,36 @@
+[dns]
+dns ansible_host=dns.example.local ansible_user=root
+
+[nfs]
+nfs ansible_host=nfs.example.local ansible_user=root
+
+[haproxy]
+haproxy ansible_host=haproxy.example.local ansible_user=root
+
+[ansible]
+ansible ansible_host=ansible.example.local ansible_user=root
+
+[vcenter]
+vcenter ansible_host=vcenter.example.local ansible_user=root ansible_password='{{ vcenter_password }}'
+
+[okd_nodes]
+bootstrap ansible_host=bootstrap.okd.example.local
+master01 ansible_host=master01.okd.example.local
+master02 ansible_host=master02.okd.example.local
+master03 ansible_host=master03.okd.example.local
+worker01 ansible_host=worker01.okd.example.local
+
+[infra:children]
+dns
+haproxy
+ansible
+
+[rhel:children]
+dns
+haproxy
+ansible
+nfs
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'

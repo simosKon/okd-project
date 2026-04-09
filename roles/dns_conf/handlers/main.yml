@@ -1,0 +1,15 @@
+﻿---
+- name: restart named
+  systemd:
+    name: named
+    state: restarted
+
+- name: restorecon zones
+  ansible.builtin.shell: |
+    for f in \
+      /var/named/{{ network.domain }}.zone \
+      /var/named/{{ network.base | regex_replace('^([0-9]+)\\.([0-9]+)\\.([0-9]+)$', '\\3.\\2.\\1') }}.in-addr.arpa \
+      /var/named/{{ network.base }}.in-addr.arpa \
+      /var/named/_msdcs.{{ network.domain }}; do
+      [ -e "$f" ] && restorecon -v "$f"
+    done

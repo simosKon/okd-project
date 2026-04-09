@@ -1,0 +1,56 @@
+---
+- name: Validate required vars for vcenter_create_clusters
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+    fail_msg: "Missing required variables for vcenter_create_clusters."
+
+- name: Set vCenter datacenter name
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+
+- name: Build cluster list from vars
+  ansible.builtin.set_fact:
+    vcenter_clusters_to_create: >-
+      {{
+        infrastructure.vcenter.clusters
+        if (infrastructure.vcenter.clusters is defined and (infrastructure.vcenter.clusters | length > 0))
+        else [infrastructure.vcenter.cluster_name | default('OKD')]
+      }}
+
+- name: Normalize cluster items to dict format
+  ansible.builtin.set_fact:
+    vcenter_cluster_items: "{{ (vcenter_cluster_items | default([])) + [ (item if item is mapping else {'name': item}) ] }}"
+  loop: "{{ vcenter_clusters_to_create }}"
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create vCenter cluster(s)
+  community.vmware.vmware_cluster:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    cluster_name: "{{ item.name }}"
+    state: present
+  loop: "{{ vcenter_cluster_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+

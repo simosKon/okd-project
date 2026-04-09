@@ -1,0 +1,24 @@
+﻿apiVersion: v1
+baseDomain: {{ okd.base_domain }}
+metadata:
+  name: {{ okd.cluster_name }}
+compute:
+- name: worker
+  replicas: {{ infrastructure.worker | length }}
+controlPlane:
+  name: master
+  replicas: {{ infrastructure.master | length }}
+platform:
+  none: {}
+networking:
+  networkType: OVNKubernetes
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  serviceNetwork:
+  - 172.30.0.0/16
+  machineNetwork:
+  - cidr: {{ network.base }}.0/{{ network.prefix }}
+sshKey: |
+  {{ okd.ssh_public_key }}
+pullSecret: '{{ okd.pull_secret }}'

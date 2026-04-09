@@ -1,0 +1,25 @@
+options {
+  listen-on port 53 { any; };
+  directory "/var/named";
+  allow-query { any; };
+  recursion yes;
+  dnssec-validation no;
+};
+
+zone "{{ network.domain }}" IN {
+  type master;
+  file "/var/named/{{ network.domain }}.zone";
+  allow-update { {{ infrastructure.ad_server.ip }}; };
+};
+
+zone "{{ network.base | regex_replace('^([0-9]+)\\.([0-9]+)\\.([0-9]+)$', '\\3.\\2.\\1') }}.in-addr.arpa" IN {
+  type master;
+  file "/var/named/{{ network.base | regex_replace('^([0-9]+)\\.([0-9]+)\\.([0-9]+)$', '\\3.\\2.\\1') }}.in-addr.arpa";
+  allow-update { {{ infrastructure.ad_server.ip }}; };
+};
+
+zone "_msdcs.{{ network.domain }}" IN {
+  type master;
+  file "/var/named/_msdcs.{{ network.domain }}";
+  allow-update { {{ infrastructure.ad_server.ip }}; };
+};

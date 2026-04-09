@@ -1,0 +1,21 @@
+[sssd]
+domains = {{ network.domain }}
+config_file_version = 2
+services = nss, pam, sudo
+
+[domain/{{ network.domain }}]
+id_provider = {{ sssd_svc.id_provider }}
+auth_provider = {{ sssd_svc.auth_provider }}
+chpass_provider = {{ sssd_svc.chpass_provider | default(sssd_svc.auth_provider) }}
+access_provider = {{ sssd_svc.access_provider | default('simple') }}
+
+ad_server = {{ infrastructure.ad_server.hostname }}
+ad_server_ip = {{ infrastructure.ad_server.ip }}
+
+krb5_realm = {{ sssd_svc.krb5_realm }}
+krb5_kdc = {{ sssd_svc.krb5_kdc }}
+
+cache_credentials = true
+enumerate = false
+fallback_homedir = /home/%u
+default_shell = /bin/bash

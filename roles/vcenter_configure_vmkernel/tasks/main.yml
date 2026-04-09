@@ -1,0 +1,193 @@
+---
+- name: Validate required vars for vcenter_configure_vmkernel
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+      - infrastructure.esxi is defined
+      - infrastructure.esxi | length > 0
+    fail_msg: "Missing required variables for vcenter_configure_vmkernel."
+
+- name: Set network config defaults
+  ansible.builtin.set_fact:
+    storage_backend_effective: "{{ storage_backend | default('nfs') }}"
+    vcenter_networks_cfg: "{{ infrastructure.vcenter.networks | default({}) }}"
+    use_vds_for_vmkernel: "{{ (platform_roles.vcenter_configure_vds_enabled | default(false)) | bool }}"
+    vds_name_for_vmkernel: "{{ infrastructure.vcenter.vds.name | default('OKD-VDS') if (infrastructure.vcenter.vds is defined) else 'OKD-VDS' }}"
+    vmotion_enabled: "{{ (infrastructure.vcenter.networks.vmotion.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined) else false }}"
+    vmotion_vswitch: "{{ infrastructure.vcenter.networks.vmotion.vswitch | default('vSwitch0') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined) else 'vSwitch0' }}"
+    vmotion_pg_name: "{{ infrastructure.vcenter.networks.vmotion.portgroup | default('vMotion') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined) else 'vMotion' }}"
+    vmotion_vmk_enabled: "{{ (infrastructure.vcenter.networks.vmotion.vmkernel.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else false }}"
+    vmotion_vmk_name: "{{ infrastructure.vcenter.networks.vmotion.vmkernel.vmk_name | default('vmk1') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else 'vmk1' }}"
+    vmotion_vmk_mtu: "{{ (infrastructure.vcenter.networks.vmotion.vmkernel.mtu | default(1500)) | int if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else 1500 }}"
+    vmotion_vmk_netmask: "{{ infrastructure.vcenter.networks.vmotion.vmkernel.netmask | default('255.255.255.0') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else '255.255.255.0' }}"
+    vmotion_vmk_gateway: "{{ infrastructure.vcenter.networks.vmotion.vmkernel.gateway | default('') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else '' }}"
+    vmotion_vmk_host_ips: "{{ infrastructure.vcenter.networks.vmotion.vmkernel.host_ips | default({}) if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vmotion is defined and infrastructure.vcenter.networks.vmotion.vmkernel is defined) else {} }}"
+    vsan_enabled: "{{ (infrastructure.vcenter.networks.vsan.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined) else false }}"
+    vsan_vswitch: "{{ infrastructure.vcenter.networks.vsan.vswitch | default('vSwitch0') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined) else 'vSwitch0' }}"
+    vsan_pg_name: "{{ infrastructure.vcenter.networks.vsan.portgroup | default('vSAN') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined) else 'vSAN' }}"
+    vsan_vmk_enabled: "{{ (infrastructure.vcenter.networks.vsan.vmkernel.enabled | default(false)) | bool if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else false }}"
+    vsan_vmk_name: "{{ infrastructure.vcenter.networks.vsan.vmkernel.vmk_name | default('vmk2') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else 'vmk2' }}"
+    vsan_vmk_mtu: "{{ (infrastructure.vcenter.networks.vsan.vmkernel.mtu | default(1500)) | int if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else 1500 }}"
+    vsan_vmk_netmask: "{{ infrastructure.vcenter.networks.vsan.vmkernel.netmask | default('255.255.255.0') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else '255.255.255.0' }}"
+    vsan_vmk_gateway: "{{ infrastructure.vcenter.networks.vsan.vmkernel.gateway | default('') if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else '' }}"
+    vsan_vmk_host_ips: "{{ infrastructure.vcenter.networks.vsan.vmkernel.host_ips | default({}) if (infrastructure.vcenter.networks is defined and infrastructure.vcenter.networks.vsan is defined and infrastructure.vcenter.networks.vsan.vmkernel is defined) else {} }}"
+
+- name: Derive effective vmkernel feature flags from selected storage backend
+  ansible.builtin.set_fact:
+    vsan_vmk_should_run: "{{ (storage_backend_effective == 'vsan') and vsan_enabled and vsan_vmk_enabled }}"
+
+- name: Validate vDS name when VMkernel must be attached to vDS
+  ansible.builtin.assert:
+    that:
+      - vds_name_for_vmkernel | length > 0
+    fail_msg: "vDS path enabled but vDS name is missing (infrastructure.vcenter.vds.name)."
+  when: use_vds_for_vmkernel
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Validate vMotion VMkernel host IP mapping
+  ansible.builtin.assert:
+    that:
+      - (vmotion_vmk_host_ips[item.hostname | default(item.ip)] | default('')) | length > 0
+    fail_msg: "Missing vMotion vmkernel IP for host {{ item.hostname | default(item.ip) }}."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: vmotion_enabled and vmotion_vmk_enabled
+
+- name: Create vMotion VMkernel adapters without gateway
+  community.vmware.vmware_vmkernel:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    vswitch_name: "{{ vmotion_vswitch if not use_vds_for_vmkernel else omit }}"
+    dvswitch_name: "{{ vds_name_for_vmkernel if use_vds_for_vmkernel else omit }}"
+    portgroup_name: "{{ vmotion_pg_name }}"
+    device: "{{ vmotion_vmk_name }}"
+    network:
+      type: static
+      ip_address: "{{ vmotion_vmk_host_ips[item.hostname | default(item.ip)] }}"
+      subnet_mask: "{{ vmotion_vmk_netmask }}"
+    mtu: "{{ vmotion_vmk_mtu }}"
+    enable_vmotion: true
+    state: present
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when:
+    - vmotion_enabled
+    - vmotion_vmk_enabled
+    - (vmotion_vmk_gateway | length) == 0
+
+- name: Create vMotion VMkernel adapters with gateway
+  community.vmware.vmware_vmkernel:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    vswitch_name: "{{ vmotion_vswitch if not use_vds_for_vmkernel else omit }}"
+    dvswitch_name: "{{ vds_name_for_vmkernel if use_vds_for_vmkernel else omit }}"
+    portgroup_name: "{{ vmotion_pg_name }}"
+    device: "{{ vmotion_vmk_name }}"
+    network:
+      type: static
+      ip_address: "{{ vmotion_vmk_host_ips[item.hostname | default(item.ip)] }}"
+      subnet_mask: "{{ vmotion_vmk_netmask }}"
+      default_gateway: "{{ vmotion_vmk_gateway }}"
+    mtu: "{{ vmotion_vmk_mtu }}"
+    enable_vmotion: true
+    state: present
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when:
+    - vmotion_enabled
+    - vmotion_vmk_enabled
+    - (vmotion_vmk_gateway | length) > 0
+
+- name: Validate vSAN VMkernel host IP mapping
+  ansible.builtin.assert:
+    that:
+      - (vsan_vmk_host_ips[item.hostname | default(item.ip)] | default('')) | length > 0
+    fail_msg: "Missing vSAN vmkernel IP for host {{ item.hostname | default(item.ip) }}."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  when: vsan_vmk_should_run
+
+- name: Create vSAN VMkernel adapters without gateway
+  community.vmware.vmware_vmkernel:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    vswitch_name: "{{ vsan_vswitch if not use_vds_for_vmkernel else omit }}"
+    dvswitch_name: "{{ vds_name_for_vmkernel if use_vds_for_vmkernel else omit }}"
+    portgroup_name: "{{ vsan_pg_name }}"
+    device: "{{ vsan_vmk_name }}"
+    network:
+      type: static
+      ip_address: "{{ vsan_vmk_host_ips[item.hostname | default(item.ip)] }}"
+      subnet_mask: "{{ vsan_vmk_netmask }}"
+    mtu: "{{ vsan_vmk_mtu }}"
+    enable_vsan: true
+    state: present
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when:
+    - vsan_vmk_should_run
+    - (vsan_vmk_gateway | length) == 0
+
+- name: Create vSAN VMkernel adapters with gateway
+  community.vmware.vmware_vmkernel:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.hostname | default(item.ip) }}"
+    vswitch_name: "{{ vsan_vswitch if not use_vds_for_vmkernel else omit }}"
+    dvswitch_name: "{{ vds_name_for_vmkernel if use_vds_for_vmkernel else omit }}"
+    portgroup_name: "{{ vsan_pg_name }}"
+    device: "{{ vsan_vmk_name }}"
+    network:
+      type: static
+      ip_address: "{{ vsan_vmk_host_ips[item.hostname | default(item.ip)] }}"
+      subnet_mask: "{{ vsan_vmk_netmask }}"
+      default_gateway: "{{ vsan_vmk_gateway }}"
+    mtu: "{{ vsan_vmk_mtu }}"
+    enable_vsan: true
+    state: present
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+  when:
+    - vsan_vmk_should_run
+    - (vsan_vmk_gateway | length) > 0
+

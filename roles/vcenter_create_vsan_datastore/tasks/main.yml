@@ -1,0 +1,125 @@
+---
+- name: Validate required vars for vcenter_create_vsan_datastore
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+    fail_msg: "Missing required variables for vcenter_create_vsan_datastore."
+
+- name: Resolve vSAN defaults
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+    vcenter_cluster_name: "{{ infrastructure.vcenter.cluster_name | default('OKD') }}"
+    vcenter_vsan_datastore_name: "{{ infrastructure.vcenter.vsan.datastore_name | default('vsanDatastore') if (infrastructure.vcenter.vsan is defined) else 'vsanDatastore' }}"
+    vcenter_vsan_auto_claim: "{{ (infrastructure.vcenter.vsan.auto_claim_storage | default(false)) | bool if (infrastructure.vcenter.vsan is defined) else false }}"
+    vcenter_vsan_disk_groups: "{{ infrastructure.vcenter.vsan.disk_groups | default({}) if (infrastructure.vcenter.vsan is defined) else {} }}"
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Enable vSAN on target cluster
+  community.vmware.vmware_cluster_vsan:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    cluster_name: "{{ vcenter_cluster_name }}"
+    enable_vsan: true
+    vsan_auto_claim_storage: "{{ vcenter_vsan_auto_claim }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Validate explicit vSAN disk group mapping exists
+  ansible.builtin.assert:
+    that:
+      - vcenter_vsan_disk_groups | length > 0
+    fail_msg: "Define infrastructure.vcenter.vsan.disk_groups with per-host cache/capacity devices for deterministic disk group creation."
+
+- name: Validate govc is installed on control host
+  ansible.builtin.command: "govc version"
+  register: govc_check
+  changed_when: false
+  failed_when: govc_check.rc != 0
+
+- name: Validate disk group mapping for each ESXi host
+  ansible.builtin.assert:
+    that:
+      - vcenter_vsan_disk_groups[item.hostname | default(item.ip)] is defined
+      - (vcenter_vsan_disk_groups[item.hostname | default(item.ip)].cache_device | default('')) | length > 0
+      - (vcenter_vsan_disk_groups[item.hostname | default(item.ip)].capacity_devices | default([])) | length > 0
+    fail_msg: "Missing vSAN disk group mapping for host {{ item.hostname | default(item.ip) }}."
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+
+- name: Check if cache device is already in an existing vSAN disk group
+  ansible.builtin.shell: |
+    set -o pipefail
+    govc host.esxcli -host "{{ item.hostname | default(item.ip) }}" vsan storage list | grep -F "{{ vcenter_vsan_disk_groups[item.hostname | default(item.ip)].cache_device }}"
+  args:
+    executable: /bin/bash
+  environment:
+    GOVC_URL: "https://{{ infrastructure.vcenter.ip }}"
+    GOVC_USERNAME: "administrator@vsphere.local"
+    GOVC_PASSWORD: "{{ vcenter_password }}"
+    GOVC_INSECURE: "1"
+  register: vsan_cache_present
+  changed_when: false
+  failed_when: false
+  loop: "{{ infrastructure.esxi }}"
+  loop_control:
+    label: "{{ item.hostname | default(item.ip) }}"
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Create vSAN disk group(s) where missing
+  ansible.builtin.shell: >
+    govc host.esxcli -host "{{ item.item.hostname | default(item.item.ip) }}" vsan storage add
+    -s "{{ vcenter_vsan_disk_groups[item.item.hostname | default(item.item.ip)].cache_device }}"
+    {{ (vcenter_vsan_disk_groups[item.item.hostname | default(item.item.ip)].capacity_devices | map('regex_replace', '^(.*)$', '-d "\\1"') | join(' ')) }}
+  environment:
+    GOVC_URL: "https://{{ infrastructure.vcenter.ip }}"
+    GOVC_USERNAME: "administrator@vsphere.local"
+    GOVC_PASSWORD: "{{ vcenter_password }}"
+    GOVC_INSECURE: "1"
+  register: vsan_diskgroup_create
+  changed_when: vsan_diskgroup_create.rc == 0
+  loop: "{{ vsan_cache_present.results }}"
+  loop_control:
+    label: "{{ item.item.hostname | default(item.item.ip) }}"
+  when: item.rc != 0
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Wait for datastore inventory refresh
+  ansible.builtin.pause:
+    seconds: 15
+
+- name: Gather datastore list from vCenter
+  community.vmware.vmware_datastore_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter: "{{ vcenter_datacenter_name }}"
+  delegate_to: localhost
+  register: vc_datastores
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Validate expected vSAN datastore exists
+  ansible.builtin.assert:
+    that:
+      - vcenter_vsan_datastore_name in (vc_datastores.datastores | map(attribute='name') | list)
+    fail_msg: "vSAN enabled but datastore '{{ vcenter_vsan_datastore_name }}' not found in datacenter '{{ vcenter_datacenter_name }}'."
+

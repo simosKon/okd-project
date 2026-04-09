@@ -1,0 +1,81 @@
+---
+- name: Validate required vars for vcenter_configure_networks
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+      - infrastructure.esxi is defined
+      - infrastructure.esxi | length > 0
+    fail_msg: "Missing required variables for vcenter_configure_networks."
+
+- name: Set vCenter network defaults
+  ansible.builtin.set_fact:
+    vcenter_networks_cfg: "{{ infrastructure.vcenter.networks | default({}) }}"
+
+- name: Resolve VM Network portgroup settings
+  ansible.builtin.set_fact:
+    vm_network_name: "{{ (vcenter_networks_cfg.vm_network.name | default('VM Network')) }}"
+    vm_network_vswitch: "{{ (vcenter_networks_cfg.vm_network.vswitch | default('vSwitch0')) }}"
+    vm_network_vlan: "{{ (vcenter_networks_cfg.vm_network.vlan_id | default(0)) | int }}"
+
+- name: Resolve optional vMotion network settings
+  ansible.builtin.set_fact:
+    vmotion_enabled: "{{ (vcenter_networks_cfg.vmotion.enabled | default(false)) | bool }}"
+    vmotion_pg_name: "{{ (vcenter_networks_cfg.vmotion.portgroup | default('vMotion')) }}"
+    vmotion_vswitch: "{{ (vcenter_networks_cfg.vmotion.vswitch | default('vSwitch0')) }}"
+    vmotion_vlan: "{{ (vcenter_networks_cfg.vmotion.vlan_id | default(0)) | int }}"
+
+- name: Resolve optional vSAN network settings
+  ansible.builtin.set_fact:
+    vsan_enabled: "{{ (vcenter_networks_cfg.vsan.enabled | default(false)) | bool }}"
+    vsan_pg_name: "{{ (vcenter_networks_cfg.vsan.portgroup | default('vSAN')) }}"
+    vsan_vswitch: "{{ (vcenter_networks_cfg.vsan.vswitch | default('vSwitch0')) }}"
+    vsan_vlan: "{{ (vcenter_networks_cfg.vsan.vlan_id | default(0)) | int }}"
+
+- name: Build desired host portgroup map
+  ansible.builtin.set_fact:
+    vcenter_host_portgroups:
+      - { name: "{{ vm_network_name }}", vswitch: "{{ vm_network_vswitch }}", vlan_id: "{{ vm_network_vlan }}" }
+
+- name: Add vMotion portgroup to desired map
+  ansible.builtin.set_fact:
+    vcenter_host_portgroups: "{{ vcenter_host_portgroups + [ {'name': vmotion_pg_name, 'vswitch': vmotion_vswitch, 'vlan_id': vmotion_vlan} ] }}"
+  when: vmotion_enabled
+
+- name: Add vSAN portgroup to desired map
+  ansible.builtin.set_fact:
+    vcenter_host_portgroups: "{{ vcenter_host_portgroups + [ {'name': vsan_pg_name, 'vswitch': vsan_vswitch, 'vlan_id': vsan_vlan} ] }}"
+  when: vsan_enabled
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Ensure required portgroups exist on each ESXi host
+  community.vmware.vmware_portgroup:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    esxi_hostname: "{{ item.0.hostname | default(item.0.ip) }}"
+    switch: "{{ item.1.vswitch }}"
+    portgroup: "{{ item.1.name }}"
+    vlan_id: "{{ item.1.vlan_id | int }}"
+    state: present
+  loop: "{{ infrastructure.esxi | product(vcenter_host_portgroups) | list }}"
+  loop_control:
+    label: "{{ (item.0.hostname | default(item.0.ip)) ~ ' -> ' ~ item.1.name }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+

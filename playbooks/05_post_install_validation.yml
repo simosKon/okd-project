@@ -1,0 +1,323 @@
+---
+- name: Generate post-install validation report
+  hosts: localhost
+  gather_facts: true
+  vars:
+    validation_output_dir: "{{ playbook_dir }}/../reports"
+    validation_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('/root/okd-install/auth/kubeconfig', true) }}"
+    validation_oc_bin: "{{ lookup('env', 'OC_BIN') | default('/usr/local/bin/oc', true) }}"
+
+  tasks:
+    - name: Ensure report output directory exists
+      ansible.builtin.file:
+        path: "{{ validation_output_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Validate kubeconfig path exists
+      ansible.builtin.stat:
+        path: "{{ validation_kubeconfig }}"
+      register: kubeconfig_stat
+
+    - name: Fail when kubeconfig path is missing
+      ansible.builtin.fail:
+        msg: "Kubeconfig not found at {{ validation_kubeconfig }}. Export KUBECONFIG or set validation_kubeconfig."
+      when: not kubeconfig_stat.stat.exists
+
+    - name: Validate oc binary is available
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - version
+          - --client
+      register: oc_client_version
+      changed_when: false
+
+    - name: Validate cluster API access
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - whoami
+      register: oc_whoami
+      changed_when: false
+
+    - name: Gather nodes
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - get
+          - nodes
+          - -o
+          - json
+      register: nodes_raw
+      changed_when: false
+
+    - name: Gather cluster operators
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - get
+          - clusteroperators
+          - -o
+          - json
+      register: operators_raw
+      changed_when: false
+
+    - name: Gather machine config pools
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - get
+          - mcp
+          - -o
+          - json
+      register: mcp_raw
+      changed_when: false
+
+    - name: Gather CSRs
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - get
+          - csr
+          - -o
+          - json
+      register: csr_raw
+      changed_when: false
+
+    - name: Gather cluster version
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_oc_bin }}"
+          - --kubeconfig
+          - "{{ validation_kubeconfig }}"
+          - get
+          - clusterversion
+          - version
+          - -o
+          - json
+      register: clusterversion_raw
+      changed_when: false
+
+    - name: Parse raw API outputs
+      ansible.builtin.set_fact:
+        nodes_items: "{{ (nodes_raw.stdout | from_json).items | default([]) }}"
+        operators_items: "{{ (operators_raw.stdout | from_json).items | default([]) }}"
+        mcp_items: "{{ (mcp_raw.stdout | from_json).items | default([]) }}"
+        csr_items: "{{ (csr_raw.stdout | from_json).items | default([]) }}"
+        clusterversion_obj: "{{ clusterversion_raw.stdout | from_json }}"
+
+    - name: Initialize counters and lists
+      ansible.builtin.set_fact:
+        nodes_total: 0
+        nodes_ready: 0
+        nodes_not_ready_list: []
+        operators_total: 0
+        operators_available_false_list: []
+        operators_degraded_true_list: []
+        operators_progressing_true_list: []
+        mcp_total: 0
+        mcp_updating_true_list: []
+        mcp_degraded_true_list: []
+        pending_csr_list: []
+
+    - name: Summarize nodes readiness
+      ansible.builtin.set_fact:
+        nodes_total: "{{ nodes_total + 1 }}"
+        nodes_ready: "{{ nodes_ready + (1 if node_ready_status == 'True' else 0) }}"
+        nodes_not_ready_list: "{{ nodes_not_ready_list + ([] if node_ready_status == 'True' else [item.metadata.name]) }}"
+      vars:
+        node_ready_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | list | first | default('Unknown')) }}"
+      loop: "{{ nodes_items }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Summarize cluster operators
+      ansible.builtin.set_fact:
+        operators_total: "{{ operators_total + 1 }}"
+        operators_available_false_list: "{{ operators_available_false_list + ([] if op_available_status == 'True' else [item.metadata.name]) }}"
+        operators_degraded_true_list: "{{ operators_degraded_true_list + ([item.metadata.name] if op_degraded_status == 'True' else []) }}"
+        operators_progressing_true_list: "{{ operators_progressing_true_list + ([item.metadata.name] if op_progressing_status == 'True' else []) }}"
+      vars:
+        op_available_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | list | first | default('Unknown')) }}"
+        op_degraded_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | list | first | default('Unknown')) }}"
+        op_progressing_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | list | first | default('Unknown')) }}"
+      loop: "{{ operators_items }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Summarize machine config pools
+      ansible.builtin.set_fact:
+        mcp_total: "{{ mcp_total + 1 }}"
+        mcp_updating_true_list: "{{ mcp_updating_true_list + ([item.metadata.name] if mcp_updating_status == 'True' else []) }}"
+        mcp_degraded_true_list: "{{ mcp_degraded_true_list + ([item.metadata.name] if mcp_degraded_status == 'True' else []) }}"
+      vars:
+        mcp_updating_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | list | first | default('Unknown')) }}"
+        mcp_degraded_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | list | first | default('Unknown')) }}"
+      loop: "{{ mcp_items }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Summarize pending CSRs
+      ansible.builtin.set_fact:
+        pending_csr_list: "{{ pending_csr_list + ([item.metadata.name] if csr_pending else []) }}"
+      vars:
+        csr_pending: "{{ (item.status.conditions is not defined) or ((item.status.conditions | default([])) | length == 0) }}"
+      loop: "{{ csr_items }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Build validation summary flags
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
+        report_passed: >-
+          {{
+            (nodes_not_ready_list | length == 0) and
+            (operators_available_false_list | length == 0) and
+            (operators_degraded_true_list | length == 0) and
+            (mcp_degraded_true_list | length == 0)
+          }}
+        report_warnings: "{{ (pending_csr_list | length > 0) or (operators_progressing_true_list | length > 0) or (mcp_updating_true_list | length > 0) }}"
+
+    - name: Build validation report object
+      ansible.builtin.set_fact:
+        validation_report:
+          generated_at: "{{ ansible_date_time.iso8601 }}"
+          kubeconfig: "{{ validation_kubeconfig }}"
+          cluster_version: "{{ clusterversion_obj.status.desired.version | default('unknown') }}"
+          cluster_channel: "{{ clusterversion_obj.spec.channel | default('unknown') }}"
+          cluster_version_state: "{{ clusterversion_obj.status.conditions | default([]) }}"
+          summary:
+            pass: "{{ report_passed }}"
+            warnings: "{{ report_warnings }}"
+            status: "{{ 'PASS' if report_passed else 'FAIL' }}"
+          nodes:
+            total: "{{ nodes_total }}"
+            ready: "{{ nodes_ready }}"
+            not_ready: "{{ nodes_not_ready_list }}"
+          cluster_operators:
+            total: "{{ operators_total }}"
+            available_false: "{{ operators_available_false_list }}"
+            degraded_true: "{{ operators_degraded_true_list }}"
+            progressing_true: "{{ operators_progressing_true_list }}"
+          machine_config_pools:
+            total: "{{ mcp_total }}"
+            updating_true: "{{ mcp_updating_true_list }}"
+            degraded_true: "{{ mcp_degraded_true_list }}"
+          csr:
+            pending: "{{ pending_csr_list }}"
+
+    - name: Build report file paths
+      ansible.builtin.set_fact:
+        report_json_path: "{{ validation_output_dir }}/post-install-validation-{{ report_timestamp }}.json"
+        report_md_path: "{{ validation_output_dir }}/post-install-validation-{{ report_timestamp }}.md"
+        report_json_latest_path: "{{ validation_output_dir }}/post-install-validation-latest.json"
+        report_md_latest_path: "{{ validation_output_dir }}/post-install-validation-latest.md"
+
+    - name: Write JSON report (timestamped)
+      ansible.builtin.copy:
+        dest: "{{ report_json_path }}"
+        mode: "0644"
+        content: "{{ validation_report | to_nice_json }}"
+
+    - name: Write JSON report (latest)
+      ansible.builtin.copy:
+        dest: "{{ report_json_latest_path }}"
+        mode: "0644"
+        content: "{{ validation_report | to_nice_json }}"
+
+    - name: Write Markdown report (timestamped)
+      ansible.builtin.copy:
+        dest: "{{ report_md_path }}"
+        mode: "0644"
+        content: |
+          # OKD Post-Install Validation Report
+          - Generated at: {{ validation_report.generated_at }}
+          - Status: **{{ validation_report.summary.status }}**
+          - Warnings present: **{{ validation_report.summary.warnings }}**
+          - Kubeconfig: `{{ validation_report.kubeconfig }}`
+          - Cluster Version: `{{ validation_report.cluster_version }}`
+          - Channel: `{{ validation_report.cluster_channel }}`
+
+          ## Nodes
+          - Total: {{ validation_report.nodes.total }}
+          - Ready: {{ validation_report.nodes.ready }}
+          - NotReady: {{ validation_report.nodes.not_ready | length }}
+          - NotReady list: {{ (validation_report.nodes.not_ready | join(', ')) if (validation_report.nodes.not_ready | length > 0) else 'none' }}
+
+          ## Cluster Operators
+          - Total: {{ validation_report.cluster_operators.total }}
+          - Available=False: {{ validation_report.cluster_operators.available_false | length }}
+          - Degraded=True: {{ validation_report.cluster_operators.degraded_true | length }}
+          - Progressing=True: {{ validation_report.cluster_operators.progressing_true | length }}
+          - Available=False list: {{ (validation_report.cluster_operators.available_false | join(', ')) if (validation_report.cluster_operators.available_false | length > 0) else 'none' }}
+          - Degraded=True list: {{ (validation_report.cluster_operators.degraded_true | join(', ')) if (validation_report.cluster_operators.degraded_true | length > 0) else 'none' }}
+          - Progressing=True list: {{ (validation_report.cluster_operators.progressing_true | join(', ')) if (validation_report.cluster_operators.progressing_true | length > 0) else 'none' }}
+
+          ## Machine Config Pools
+          - Total: {{ validation_report.machine_config_pools.total }}
+          - Updating=True: {{ validation_report.machine_config_pools.updating_true | length }}
+          - Degraded=True: {{ validation_report.machine_config_pools.degraded_true | length }}
+          - Updating=True list: {{ (validation_report.machine_config_pools.updating_true | join(', ')) if (validation_report.machine_config_pools.updating_true | length > 0) else 'none' }}
+          - Degraded=True list: {{ (validation_report.machine_config_pools.degraded_true | join(', ')) if (validation_report.machine_config_pools.degraded_true | length > 0) else 'none' }}
+
+          ## CSRs
+          - Pending: {{ validation_report.csr.pending | length }}
+          - Pending list: {{ (validation_report.csr.pending | join(', ')) if (validation_report.csr.pending | length > 0) else 'none' }}
+
+    - name: Write Markdown report (latest)
+      ansible.builtin.copy:
+        dest: "{{ report_md_latest_path }}"
+        mode: "0644"
+        content: |
+          # OKD Post-Install Validation Report
+          - Generated at: {{ validation_report.generated_at }}
+          - Status: **{{ validation_report.summary.status }}**
+          - Warnings present: **{{ validation_report.summary.warnings }}**
+          - Kubeconfig: `{{ validation_report.kubeconfig }}`
+          - Cluster Version: `{{ validation_report.cluster_version }}`
+          - Channel: `{{ validation_report.cluster_channel }}`
+
+          ## Nodes
+          - Total: {{ validation_report.nodes.total }}
+          - Ready: {{ validation_report.nodes.ready }}
+          - NotReady: {{ validation_report.nodes.not_ready | length }}
+          - NotReady list: {{ (validation_report.nodes.not_ready | join(', ')) if (validation_report.nodes.not_ready | length > 0) else 'none' }}
+
+          ## Cluster Operators
+          - Total: {{ validation_report.cluster_operators.total }}
+          - Available=False: {{ validation_report.cluster_operators.available_false | length }}
+          - Degraded=True: {{ validation_report.cluster_operators.degraded_true | length }}
+          - Progressing=True: {{ validation_report.cluster_operators.progressing_true | length }}
+          - Available=False list: {{ (validation_report.cluster_operators.available_false | join(', ')) if (validation_report.cluster_operators.available_false | length > 0) else 'none' }}
+          - Degraded=True list: {{ (validation_report.cluster_operators.degraded_true | join(', ')) if (validation_report.cluster_operators.degraded_true | length > 0) else 'none' }}
+          - Progressing=True list: {{ (validation_report.cluster_operators.progressing_true | join(', ')) if (validation_report.cluster_operators.progressing_true | length > 0) else 'none' }}
+
+          ## Machine Config Pools
+          - Total: {{ validation_report.machine_config_pools.total }}
+          - Updating=True: {{ validation_report.machine_config_pools.updating_true | length }}
+          - Degraded=True: {{ validation_report.machine_config_pools.degraded_true | length }}
+          - Updating=True list: {{ (validation_report.machine_config_pools.updating_true | join(', ')) if (validation_report.machine_config_pools.updating_true | length > 0) else 'none' }}
+          - Degraded=True list: {{ (validation_report.machine_config_pools.degraded_true | join(', ')) if (validation_report.machine_config_pools.degraded_true | length > 0) else 'none' }}
+
+          ## CSRs
+          - Pending: {{ validation_report.csr.pending | length }}
+          - Pending list: {{ (validation_report.csr.pending | join(', ')) if (validation_report.csr.pending | length > 0) else 'none' }}
+
+    - name: Print report summary
+      ansible.builtin.debug:
+        msg:
+          - "Validation status: {{ validation_report.summary.status }}"
+          - "Warnings present: {{ validation_report.summary.warnings }}"
+          - "JSON report: {{ report_json_path }}"
+          - "Markdown report: {{ report_md_path }}"

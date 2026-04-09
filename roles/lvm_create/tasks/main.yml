@@ -1,0 +1,29 @@
+---
+- name: Validate nfs_vm_storage for LVM creation
+  ansible.builtin.assert:
+    that:
+      - nfs_vm_storage is defined
+      - nfs_vm_storage.vg_name is defined
+      - nfs_vm_storage.lv_name is defined
+      - nfs_vm_storage.lv_size is defined
+      - nfs_vm_storage.pv_disks is defined
+      - nfs_vm_storage.pv_disks | length > 0
+    fail_msg: "Missing nfs_vm_storage LVM vars (vg_name/lv_name/lv_size/pv_disks)."
+
+- name: Create or extend volume group
+  community.general.lvg:
+    vg: "{{ nfs_vm_storage.vg_name }}"
+    pvs: "{{ nfs_vm_storage.pv_disks }}"
+
+- name: Create logical volume
+  community.general.lvol:
+    vg: "{{ nfs_vm_storage.vg_name }}"
+    lv: "{{ nfs_vm_storage.lv_name }}"
+    size: "{{ nfs_vm_storage.lv_size }}"
+    state: present
+
+- name: Create filesystem on logical volume
+  ansible.builtin.filesystem:
+    fstype: "{{ nfs_vm_storage.fs_type | default('xfs') }}"
+    dev: "/dev/{{ nfs_vm_storage.vg_name }}/{{ nfs_vm_storage.lv_name }}"
+    force: false

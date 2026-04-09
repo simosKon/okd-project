@@ -1,0 +1,29 @@
+---
+- name: Install chrony package
+  ansible.builtin.yum:
+    name: chrony
+    state: present
+
+- name: Remove existing pool and server lines from chrony.conf
+  ansible.builtin.lineinfile:
+    path: /etc/chrony.conf
+    regexp: '^(pool|server).*iburst'
+    state: absent
+
+- name: Configure new NTP servers in chrony.conf
+  ansible.builtin.lineinfile:
+    path: /etc/chrony.conf
+    regexp: '^server '
+    line: 'server {{ network.ntp_server }} iburst'
+    state: present  
+
+- name: Ensure chrony service is started and enabled
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: yes
+
+- name: restart chronyd
+  ansible.builtin.service:
+    name: chronyd
+    state: restarted

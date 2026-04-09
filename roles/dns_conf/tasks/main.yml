@@ -1,0 +1,127 @@
+---
+- name: Install BIND packages
+  dnf:
+    name:
+      - bind
+      - bind-utils
+      - policycoreutils-python-utils
+    state: present
+
+- name: Backup original named.conf
+  copy:
+    src: /etc/named.conf
+    dest: /etc/named.conf.backup
+    backup: yes
+    force: no
+    remote_src: yes
+  ignore_errors: true
+
+- name: Build reverse zone filename
+  set_fact:
+    dns_reverse_zone_file: "{{ network.base | regex_replace('^([0-9]+)\\.([0-9]+)\\.([0-9]+)$', '\\3.\\2.\\1') }}.in-addr.arpa"
+
+- name: Build deterministic DNS data model
+  set_fact:
+    dns_infra: "{{ (infrastructure_core | default({})) | combine((infrastructure_vcenter | default({})), recursive=True) | combine((infrastructure_okd | default({})), recursive=True) }}"
+    dns_esxi_records: "{{ (infrastructure_vcenter | default({})).get('esxi', []) }}"
+
+- name: Validate ESXi records are present for DNS rendering
+  assert:
+    that:
+      - dns_esxi_records | length > 0
+    fail_msg: "No ESXi records found in infrastructure_vcenter.esxi. DNS zone would miss esxi hostnames."
+
+- name: Stop named before rewriting static zone files
+  systemd:
+    name: named
+    state: stopped
+  ignore_errors: true
+
+- name: Remove stale BIND journal files
+  file:
+    path: "/var/named/{{ item }}"
+    state: absent
+  loop:
+    - "{{ network.domain }}.zone.jnl"
+    - "{{ dns_reverse_zone_file }}.jnl"
+    - "_msdcs.{{ network.domain }}.jnl"
+
+- name: Deploy named.conf
+  template:
+    src: named.conf.j2
+    dest: /etc/named.conf
+    owner: named
+    group: named
+    mode: "0640"
+    backup: yes
+  notify: restart named
+
+- name: Deploy forward zone
+  template:
+    src: forward.zone.j2
+    dest: "/var/named/{{ network.domain }}.zone"
+    owner: named
+    group: named
+    mode: "0640"
+    backup: yes
+  notify: restart named
+
+- name: Deploy reverse zone
+  template:
+    src: reverse.zone.j2
+    dest: "/var/named/{{ dns_reverse_zone_file }}"
+    owner: named
+    group: named
+    mode: "0640"
+    backup: yes
+  notify: restart named
+
+- name: Deploy _msdcs zone
+  template:
+    src: _msdcs.zone.j2
+    dest: "/var/named/_msdcs.{{ network.domain }}"
+    owner: named
+    group: named
+    mode: "0640"
+    backup: yes
+  notify: restart named
+
+- name: Persist SELinux context for zone files (no collection dependency)
+  ansible.builtin.shell: >
+    semanage fcontext -a -t named_zone_t /var/named/{{ item }}
+    || semanage fcontext -m -t named_zone_t /var/named/{{ item }}
+  changed_when: true
+  loop:
+    - "{{ network.domain }}.zone"
+    - "{{ dns_reverse_zone_file }}"
+    - "_msdcs.{{ network.domain }}"
+  notify: restorecon zones
+
+- name: Start and enable named
+  systemd:
+    name: named
+    state: started
+    enabled: yes
+
+- name: Validate named.conf syntax
+  command: named-checkconf /etc/named.conf
+  changed_when: false
+
+- name: Validate forward zone syntax
+  command: "named-checkzone {{ network.domain }} /var/named/{{ network.domain }}.zone"
+  changed_when: false
+
+- name: Validate reverse zone syntax
+  command: "named-checkzone {{ dns_reverse_zone_file }} /var/named/{{ dns_reverse_zone_file }}"
+  changed_when: false
+
+- name: Validate _msdcs zone syntax
+  command: "named-checkzone _msdcs.{{ network.domain }} /var/named/_msdcs.{{ network.domain }}"
+  changed_when: false
+
+- name: Wait for DNS service to be ready on port 53
+  wait_for:
+    host: "{{ dns_infra.dns_server.ip }}"
+    port: 53
+    timeout: 30
+    delay: 3

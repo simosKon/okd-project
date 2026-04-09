@@ -1,0 +1,448 @@
+---
+- name: Pre-install OKD prerequisites and report
+  hosts: localhost
+  gather_facts: true
+  vars:
+    preokd_output_dir: "{{ playbook_dir }}/../reports"
+    preokd_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
+    preokd_install_dir: "{{ okd.install_dir | default(ansible_env.HOME + '/okd-install') }}"
+    preokd_tools_dir: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
+    preokd_require_ignition_files_mode: "{{ (preokd_require_ignition_files | default(false)) | bool }}"
+    preokd_fail_on_critical_mode: "{{ (preokd_fail_on_critical | default(false)) | bool }}"
+    preokd_require_haproxy_mode: "{{ (preokd_require_haproxy | default(true)) | bool }}"
+    preokd_require_vip_reachability_mode: "{{ (preokd_require_vip_reachability | default(true)) | bool }}"
+    preokd_require_node_dns_mode: "{{ (preokd_require_node_dns | default(true)) | bool }}"
+
+  tasks:
+    - name: Ensure report output directory exists
+      ansible.builtin.file:
+        path: "{{ preokd_output_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Core variable checks
+      ansible.builtin.set_fact:
+        chk_network_domain: "{{ network.domain is defined and (network.domain | length > 0) }}"
+        chk_network_dns_servers: "{{ network.dns_servers is defined and (network.dns_servers | length > 0) }}"
+        chk_okd_cluster_name: "{{ okd.cluster_name is defined and (okd.cluster_name | length > 0) }}"
+        chk_okd_base_domain: "{{ okd.base_domain is defined and (okd.base_domain | length > 0) }}"
+        chk_okd_version: "{{ okd.version is defined and (okd.version | length > 0) }}"
+        chk_okd_ssh_key: "{{ okd.ssh_public_key is defined and (okd.ssh_public_key | length > 20) and (okd.ssh_public_key is match('^(ssh-rsa|ssh-ed25519|ecdsa-)')) }}"
+        chk_okd_pull_secret: "{{ okd.pull_secret is defined and (okd.pull_secret | length > 30) and ('\"fake\"' not in okd.pull_secret) }}"
+        chk_vips_defined: "{{ infrastructure.load_balancer_vips is defined and (infrastructure.load_balancer_vips | length >= 2) }}"
+        chk_bootstrap_defined: "{{ infrastructure.bootstrap is defined and infrastructure.bootstrap.ip is defined and infrastructure.bootstrap.hostname is defined }}"
+        chk_masters_defined: "{{ infrastructure.master is defined and (infrastructure.master | length >= 3) }}"
+        chk_workers_defined: "{{ infrastructure.worker is defined and (infrastructure.worker | length >= 1) }}"
+
+    - name: Build expected VIP values
+      ansible.builtin.set_fact:
+        preokd_api_vip_ip: "{{ (infrastructure.load_balancer_vips[0].ip | default('')) if (infrastructure.load_balancer_vips is defined and (infrastructure.load_balancer_vips | length) > 0) else '' }}"
+        preokd_apps_vip_ip: "{{ (infrastructure.load_balancer_vips[1].ip | default('')) if (infrastructure.load_balancer_vips is defined and (infrastructure.load_balancer_vips | length) > 1) else '' }}"
+
+    - name: Check HAProxy host SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.haproxy_server.ip }}"
+        port: 22
+        timeout: 3
+      register: preokd_haproxy_ssh_check
+      changed_when: false
+      failed_when: false
+      when:
+        - preokd_require_haproxy_mode
+        - infrastructure.haproxy_server is defined
+        - infrastructure.haproxy_server.ip is defined
+        - infrastructure.haproxy_server.ip | length > 0
+
+    - name: Check HAProxy service ports on HAProxy host IP
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.haproxy_server.ip }}"
+        port: "{{ item }}"
+        timeout: 3
+      register: preokd_haproxy_ports_check
+      changed_when: false
+      failed_when: false
+      loop: [6443, 22623, 80, 443]
+      when:
+        - preokd_require_haproxy_mode
+        - infrastructure.haproxy_server is defined
+        - infrastructure.haproxy_server.ip is defined
+        - infrastructure.haproxy_server.ip | length > 0
+
+    - name: Build expected OKD node DNS hostnames list
+      ansible.builtin.set_fact:
+        preokd_required_node_dns_hosts: >-
+          {{
+            (
+              [infrastructure.bootstrap.hostname | default('')]
+              + (infrastructure.master | default([]) | map(attribute='hostname') | list)
+              + (infrastructure.worker | default([]) | map(attribute='hostname') | list)
+            )
+            | reject('equalto', '')
+            | list
+          }}
+
+    - name: Check DNS resolution for bootstrap/master/worker hostnames
+      ansible.builtin.command: "getent hosts {{ item }}"
+      register: preokd_node_dns_checks
+      changed_when: false
+      failed_when: false
+      loop: "{{ preokd_required_node_dns_hosts }}"
+      when:
+        - preokd_require_node_dns_mode
+        - preokd_required_node_dns_hosts | length > 0
+
+    - name: Check VIP reachability on required ports
+      ansible.builtin.wait_for:
+        host: "{{ item.host }}"
+        port: "{{ item.port }}"
+        timeout: 3
+      register: preokd_vip_port_checks
+      changed_when: false
+      failed_when: false
+      loop:
+        - { host: "{{ preokd_api_vip_ip }}", port: 6443 }
+        - { host: "{{ preokd_api_vip_ip }}", port: 22623 }
+        - { host: "{{ preokd_apps_vip_ip }}", port: 80 }
+        - { host: "{{ preokd_apps_vip_ip }}", port: 443 }
+      loop_control:
+        label: "{{ item.host }}:{{ item.port }}"
+      when:
+        - preokd_require_vip_reachability_mode
+        - chk_vips_defined
+        - preokd_api_vip_ip | length > 0
+        - preokd_apps_vip_ip | length > 0
+
+    - name: Check openshift-install binaries
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "/usr/local/bin/openshift-install"
+        - "{{ preokd_tools_dir }}/openshift-install"
+        - "/usr/local/bin/oc"
+        - "{{ preokd_tools_dir }}/oc"
+      register: okd_bins_stat
+
+    - name: Derive binary presence checks
+      ansible.builtin.set_fact:
+        chk_openshift_install_present: "{{ (okd_bins_stat.results[0].stat.exists | default(false)) or (okd_bins_stat.results[1].stat.exists | default(false)) }}"
+        chk_oc_present: "{{ (okd_bins_stat.results[2].stat.exists | default(false)) or (okd_bins_stat.results[3].stat.exists | default(false)) }}"
+        preokd_openshift_install_bin: >-
+          {{
+            '/usr/local/bin/openshift-install'
+            if (okd_bins_stat.results[0].stat.exists | default(false))
+            else (preokd_tools_dir + '/openshift-install')
+          }}
+
+    - name: Check openshift-install execution
+      ansible.builtin.command:
+        argv:
+          - "{{ preokd_openshift_install_bin }}"
+          - version
+      register: openshift_install_version_check
+      changed_when: false
+      failed_when: false
+      when: chk_openshift_install_present
+
+    - name: Check DNS resolution for API endpoints
+      ansible.builtin.command: "getent hosts {{ item }}"
+      register: api_dns_checks
+      changed_when: false
+      failed_when: false
+      loop:
+        - "api.{{ okd.cluster_name }}.{{ okd.base_domain }}"
+        - "api-int.{{ okd.cluster_name }}.{{ okd.base_domain }}"
+        - "console-openshift-console.apps.{{ okd.cluster_name }}.{{ okd.base_domain }}"
+      when:
+        - chk_okd_cluster_name
+        - chk_okd_base_domain
+
+    - name: Check terraform files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ playbook_dir }}/../terraform/main.tf"
+        - "{{ playbook_dir }}/../terraform/terraform.tfvars"
+      register: tf_files_stat
+
+    - name: Read terraform.tfvars when present
+      ansible.builtin.slurp:
+        path: "{{ playbook_dir }}/../terraform/terraform.tfvars"
+      register: tfvars_slurp
+      when: tf_files_stat.results[1].stat.exists | default(false)
+
+    - name: Parse terraform.tfvars key values
+      ansible.builtin.set_fact:
+        tfvars_content: "{{ tfvars_slurp.content | b64decode }}"
+        tfvars_template_name: "{{ (tfvars_slurp.content | b64decode | regex_findall('(?m)^\\s*template_name\\s*=\\s*\"([^\"]+)\"') | first | default('')) }}"
+        tfvars_bootstrap_ign: "{{ (tfvars_slurp.content | b64decode | regex_findall('(?m)^\\s*bootstrap_ignition_b64_file\\s*=\\s*\"([^\"]+)\"') | first | default('')) }}"
+        tfvars_master_ign: "{{ (tfvars_slurp.content | b64decode | regex_findall('(?m)^\\s*master_ignition_b64_file\\s*=\\s*\"([^\"]+)\"') | first | default('')) }}"
+        tfvars_worker_ign: "{{ (tfvars_slurp.content | b64decode | regex_findall('(?m)^\\s*worker_ignition_b64_file\\s*=\\s*\"([^\"]+)\"') | first | default('')) }}"
+      when: tf_files_stat.results[1].stat.exists | default(false)
+
+    - name: Check ignition artifacts in install dir
+      ansible.builtin.stat:
+        path: "{{ preokd_install_dir }}/{{ item }}"
+      loop:
+        - bootstrap.64
+        - master.64
+        - worker.64
+      register: okd_install_ignitions
+
+    - name: Check ignition paths referenced in terraform.tfvars
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ tfvars_bootstrap_ign | default('') }}"
+        - "{{ tfvars_master_ign | default('') }}"
+        - "{{ tfvars_worker_ign | default('') }}"
+      register: tfvars_ignition_stats
+      when:
+        - tf_files_stat.results[1].stat.exists | default(false)
+        - (tfvars_bootstrap_ign | default('') | length > 0)
+        - (tfvars_master_ign | default('') | length > 0)
+        - (tfvars_worker_ign | default('') | length > 0)
+
+    - name: Build OKD findings and guidance
+      ansible.builtin.set_fact:
+        preokd_dns_failed: "{{ (api_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+        preokd_node_dns_failed: "{{ (preokd_node_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+        preokd_haproxy_ports_failed: "{{ (preokd_haproxy_ports_check.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
+        preokd_vip_ports_failed: "{{ (preokd_vip_port_checks.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
+        preokd_install_ignition_missing: "{{ (okd_install_ignitions.results | default([])) | rejectattr('stat.exists') | map(attribute='stat.path') | list }}"
+        preokd_tfvars_ignition_missing: "{{ (tfvars_ignition_stats.results | default([])) | rejectattr('stat.exists') | map(attribute='stat.path') | list }}"
+        preokd_critical_failures: >-
+          {{
+            []
+            + ([] if chk_network_domain else ['Missing network.domain'])
+            + ([] if chk_network_dns_servers else ['Missing network.dns_servers'])
+            + ([] if chk_okd_cluster_name else ['Missing okd.cluster_name'])
+            + ([] if chk_okd_base_domain else ['Missing okd.base_domain'])
+            + ([] if chk_okd_version else ['Missing okd.version'])
+            + ([] if chk_okd_ssh_key else ['okd.ssh_public_key missing/invalid'])
+            + ([] if chk_okd_pull_secret else ['okd.pull_secret missing/placeholder (fake)'])
+            + ([] if chk_vips_defined else ['Missing infrastructure.load_balancer_vips (need at least API and Ingress VIP)'])
+            + ([] if chk_bootstrap_defined else ['Missing infrastructure.bootstrap.ip/hostname'])
+            + ([] if chk_masters_defined else ['Missing infrastructure.master list (need at least 3)'])
+            + ([] if chk_workers_defined else ['Missing infrastructure.worker list (need at least 1)'])
+            + ([] if (preokd_dns_failed | length == 0) else ['API/apps DNS names are not resolving from control host'])
+            + ([] if (not preokd_require_haproxy_mode) else ([] if (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed) else ['HAProxy host is not reachable on TCP/22']))
+            + ([] if (not preokd_require_haproxy_mode) else ([] if ((preokd_haproxy_ports_failed | length) == 0) else ['HAProxy required ports are not reachable on HAProxy host IP: ' + (preokd_haproxy_ports_failed | join(', '))]))
+            + ([] if (not preokd_require_node_dns_mode) else ([] if ((preokd_node_dns_failed | length) == 0) else ['Node DNS records missing for: ' + (preokd_node_dns_failed | join(', '))]))
+            + ([] if (not preokd_require_vip_reachability_mode) else ([] if ((preokd_vip_ports_failed | length) == 0) else ['VIP port reachability failed for one or more api/apps endpoints']))
+            + ([] if chk_openshift_install_present else ['openshift-install binary not found (/usr/local/bin or okd.tools_dir)'])
+            + ([] if chk_oc_present else ['oc binary not found (/usr/local/bin or okd.tools_dir)'])
+            + ([] if (openshift_install_version_check is not defined or openshift_install_version_check.rc == 0) else ['openshift-install exists but version command failed'])
+            + ([] if (tf_files_stat.results[0].stat.exists | default(false)) else ['terraform/main.tf is missing'])
+            + ([] if (tf_files_stat.results[1].stat.exists | default(false)) else ['terraform/terraform.tfvars is missing'])
+            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['terraform.tfvars missing template_name'])
+            + ([] if (not preokd_require_ignition_files_mode) else ([] if ((preokd_install_ignition_missing | length) == 0) else ['Required ignition files missing in okd.install_dir']))
+            + ([] if (not preokd_require_ignition_files_mode) else ([] if ((preokd_tfvars_ignition_missing | length) == 0) else ['Ignition paths in terraform.tfvars do not exist']))
+          }}
+        preokd_warnings: >-
+          {{
+            []
+            + ([] if (preokd_dns_failed | length == 0) else ['Some API/apps DNS names do not resolve yet from control host'])
+            + (['HAProxy checks are disabled (preokd_require_haproxy=false).'] if (not preokd_require_haproxy_mode) else [])
+            + (['Node DNS checks are disabled (preokd_require_node_dns=false).'] if (not preokd_require_node_dns_mode) else [])
+            + (['VIP reachability checks are disabled (preokd_require_vip_reachability=false).'] if (not preokd_require_vip_reachability_mode) else [])
+            + (['Ignition files are not required in this mode. Use -e preokd_require_ignition_files=true before terraform apply.'] if (not preokd_require_ignition_files_mode) else [])
+            + ([] if ((preokd_install_ignition_missing | length) == 0) else ['Ignition artifacts missing in install dir: run playbooks/02_okd_upi_prepare.yml'])
+            + ([] if ((preokd_tfvars_ignition_missing | length) == 0) else ['terraform.tfvars ignition paths point to missing files'])
+          }}
+        preokd_recommendations: >-
+          {{
+            []
+            + ([] if chk_network_domain else ['Set network.domain'])
+            + ([] if chk_network_dns_servers else ['Set network.dns_servers'])
+            + ([] if chk_okd_cluster_name else ['Set okd.cluster_name'])
+            + ([] if chk_okd_base_domain else ['Set okd.base_domain'])
+            + ([] if chk_okd_version else ['Set okd.version'])
+            + ([] if chk_okd_ssh_key else ['Set okd.ssh_public_key with a valid SSH public key'])
+            + ([] if chk_okd_pull_secret else ['Set okd.pull_secret with a real quay auth JSON (not fake placeholder)'])
+            + ([] if chk_vips_defined else ['Set infrastructure.load_balancer_vips with API and Ingress VIP entries'])
+            + ([] if chk_bootstrap_defined else ['Set infrastructure.bootstrap.ip and infrastructure.bootstrap.hostname'])
+            + ([] if chk_masters_defined else ['Set infrastructure.master with at least 3 control plane nodes'])
+            + ([] if chk_workers_defined else ['Set infrastructure.worker with at least 1 worker node'])
+            + ([] if (not preokd_require_haproxy_mode or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed)) else ['Ensure HAProxy VM exists and is reachable on TCP/22'])
+            + ([] if (not preokd_require_haproxy_mode or ((preokd_haproxy_ports_failed | length) == 0)) else ['Ensure HAProxy listens on 6443, 22623, 80, 443'])
+            + ([] if (not preokd_require_node_dns_mode or ((preokd_node_dns_failed | length) == 0)) else ['Create/fix DNS A records for bootstrap/master/worker nodes'])
+            + ([] if (not preokd_require_vip_reachability_mode or ((preokd_vip_ports_failed | length) == 0)) else ['Ensure API/Ingress VIPs are routed and reachable on required ports'])
+            + ([] if chk_openshift_install_present else ['Run playbooks/02_okd_upi_prepare.yml to install openshift-install'])
+            + ([] if chk_oc_present else ['Run playbooks/02_okd_upi_prepare.yml to install oc'])
+            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['Set template_name in terraform/terraform.tfvars'])
+            + (['All required OKD vars look OK for current stage.'] if (
+                chk_network_domain and
+                chk_network_dns_servers and
+                chk_okd_cluster_name and
+                chk_okd_base_domain and
+                chk_okd_version and
+                chk_okd_ssh_key and
+                chk_okd_pull_secret and
+                chk_vips_defined and
+                chk_bootstrap_defined and
+                chk_masters_defined and
+                chk_workers_defined and
+                ((preokd_dns_failed | length) == 0) and
+                ((not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed)) and
+                ((not preokd_require_haproxy_mode) or ((preokd_haproxy_ports_failed | length) == 0)) and
+                ((not preokd_require_node_dns_mode) or ((preokd_node_dns_failed | length) == 0)) and
+                ((not preokd_require_vip_reachability_mode) or ((preokd_vip_ports_failed | length) == 0)) and
+                chk_openshift_install_present and
+                chk_oc_present
+              ) else [])
+          }}
+        preokd_diagnostic_hints:
+          - "If DNS checks fail, validate resolver order (/etc/resolv.conf), zone authority, and TTL propagation."
+          - "If API names resolve but install still fails, validate HAProxy listeners/backends and node-to-VIP reachability."
+          - "If binaries/ignitions are present but steps fail, verify file permissions and exact paths used by Terraform."
+          - "Check control-host firewall/routing and VM network/VLAN placement for bootstrap, masters, and worker."
+          - "Use installer log correlation (/root/okd-install/.openshift_install.log) to confirm whether issue is DNS, LB, cert, or node bootstrap."
+
+    - name: Build OKD report
+      ansible.builtin.set_fact:
+        preokd_report:
+          generated_at: "{{ ansible_date_time.iso8601 }}"
+          stage: "pre_install_okd"
+          summary:
+            status: "{{ 'PASS' if (preokd_critical_failures | length == 0) else 'FAIL' }}"
+            critical_failures: "{{ preokd_critical_failures | length }}"
+            warnings: "{{ preokd_warnings | length }}"
+          context:
+            require_ignition_files: "{{ preokd_require_ignition_files_mode }}"
+            require_haproxy: "{{ preokd_require_haproxy_mode }}"
+            require_vip_reachability: "{{ preokd_require_vip_reachability_mode }}"
+            require_node_dns: "{{ preokd_require_node_dns_mode }}"
+            install_dir: "{{ preokd_install_dir }}"
+            tools_dir: "{{ preokd_tools_dir }}"
+            tfvars_template_name: "{{ tfvars_template_name | default('') }}"
+          execution_intent:
+            - "OKD installation readiness validation"
+            - "Load balancer dependency validation (HAProxy + VIP ports)"
+            - "DNS validation for API/apps and node hostnames"
+            - "Artifact validation (terraform files + ignition)"
+          critical_failures: "{{ preokd_critical_failures }}"
+          warnings: "{{ preokd_warnings }}"
+          recommendations: "{{ preokd_recommendations }}"
+          diagnostic_hints: "{{ preokd_diagnostic_hints }}"
+          readiness_gates:
+            haproxy_reachable: "{{ (not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed) }}"
+            haproxy_ports_ready: "{{ (not preokd_require_haproxy_mode) or ((preokd_haproxy_ports_failed | length) == 0) }}"
+            api_apps_dns_ready: "{{ (preokd_dns_failed | length) == 0 }}"
+            node_dns_ready: "{{ (not preokd_require_node_dns_mode) or ((preokd_node_dns_failed | length) == 0) }}"
+            vip_ports_ready: "{{ (not preokd_require_vip_reachability_mode) or ((preokd_vip_ports_failed | length) == 0) }}"
+            ignition_ready: "{{ (not preokd_require_ignition_files_mode) or (((preokd_install_ignition_missing | length) == 0) and ((preokd_tfvars_ignition_missing | length) == 0)) }}"
+          details:
+            dns_not_resolving: "{{ preokd_dns_failed }}"
+            node_dns_not_resolving: "{{ preokd_node_dns_failed }}"
+            haproxy_ports_failed: "{{ preokd_haproxy_ports_failed }}"
+            vip_ports_failed: "{{ preokd_vip_ports_failed }}"
+            install_dir_missing_ignitions: "{{ preokd_install_ignition_missing }}"
+            tfvars_missing_ignitions: "{{ preokd_tfvars_ignition_missing }}"
+
+    - name: Build OKD report file paths
+      ansible.builtin.set_fact:
+        preokd_json_path: "{{ preokd_output_dir }}/pre-install-okd-{{ preokd_timestamp }}.json"
+        preokd_md_path: "{{ preokd_output_dir }}/pre-install-okd-{{ preokd_timestamp }}.md"
+        preokd_json_latest_path: "{{ preokd_output_dir }}/pre-install-okd-latest.json"
+        preokd_md_latest_path: "{{ preokd_output_dir }}/pre-install-okd-latest.md"
+
+    - name: Write OKD JSON reports
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        mode: "0644"
+        content: "{{ preokd_report | to_nice_json }}"
+      loop:
+        - "{{ preokd_json_path }}"
+        - "{{ preokd_json_latest_path }}"
+
+    - name: Write OKD Markdown reports
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        mode: "0644"
+        content: |
+          # Pre-Install OKD Report
+          - Generated at: {{ preokd_report.generated_at }}
+          - Status: **{{ preokd_report.summary.status }}**
+          - Critical failures: {{ preokd_report.summary.critical_failures }}
+          - Warnings: {{ preokd_report.summary.warnings }}
+          - Require ignition files: `{{ preokd_report.context.require_ignition_files }}`
+          - Require HAProxy checks: `{{ preokd_report.context.require_haproxy }}`
+          - Require VIP reachability checks: `{{ preokd_report.context.require_vip_reachability }}`
+          - Require node DNS checks: `{{ preokd_report.context.require_node_dns }}`
+          - Install dir: `{{ preokd_report.context.install_dir }}`
+          - Tools dir: `{{ preokd_report.context.tools_dir }}`
+          - Terraform template_name: `{{ preokd_report.context.tfvars_template_name }}`
+
+          ## What This Run Intends To Validate
+          {% for x in preokd_report.execution_intent %}
+          - {{ x }}
+          {% endfor %}
+
+          ## Readiness Gates
+          - HAProxy reachable: **{{ 'PASS' if preokd_report.readiness_gates.haproxy_reachable else 'FAIL' }}**
+          - HAProxy required ports ready: **{{ 'PASS' if preokd_report.readiness_gates.haproxy_ports_ready else 'FAIL' }}**
+          - API/apps DNS ready: **{{ 'PASS' if preokd_report.readiness_gates.api_apps_dns_ready else 'FAIL' }}**
+          - Node DNS ready: **{{ 'PASS' if preokd_report.readiness_gates.node_dns_ready else 'FAIL' }}**
+          - VIP ports ready: **{{ 'PASS' if preokd_report.readiness_gates.vip_ports_ready else 'FAIL' }}**
+          - Ignition readiness: **{{ 'PASS' if preokd_report.readiness_gates.ignition_ready else 'FAIL' }}**
+
+          ## Critical Failures
+          {% if preokd_report.critical_failures | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preokd_report.critical_failures %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Warnings
+          {% if preokd_report.warnings | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preokd_report.warnings %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Recommendations
+          {% if preokd_report.recommendations | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preokd_report.recommendations %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Additional Diagnostic Hints
+          {% for x in preokd_report.diagnostic_hints %}
+          - {{ x }}
+          {% endfor %}
+
+          ## Details
+          - DNS not resolving: {{ (preokd_report.details.dns_not_resolving | join(', ')) if (preokd_report.details.dns_not_resolving | length > 0) else 'none' }}
+          - Node DNS not resolving: {{ (preokd_report.details.node_dns_not_resolving | join(', ')) if (preokd_report.details.node_dns_not_resolving | length > 0) else 'none' }}
+          - HAProxy ports failed: {{ (preokd_report.details.haproxy_ports_failed | join(', ')) if (preokd_report.details.haproxy_ports_failed | length > 0) else 'none' }}
+          - VIP ports failed: {{ (preokd_report.details.vip_ports_failed | to_json) if (preokd_report.details.vip_ports_failed | length > 0) else 'none' }}
+          - Missing ignitions in install dir: {{ (preokd_report.details.install_dir_missing_ignitions | join(', ')) if (preokd_report.details.install_dir_missing_ignitions | length > 0) else 'none' }}
+          - Missing ignitions from tfvars paths: {{ (preokd_report.details.tfvars_missing_ignitions | join(', ')) if (preokd_report.details.tfvars_missing_ignitions | length > 0) else 'none' }}
+      loop:
+        - "{{ preokd_md_path }}"
+        - "{{ preokd_md_latest_path }}"
+
+    - name: Print OKD report summary
+      ansible.builtin.debug:
+        msg:
+          - "Pre-install OKD status: {{ preokd_report.summary.status }}"
+          - "Go/No-Go: Continue only when status is PASS."
+          - "Critical failures: {{ preokd_report.summary.critical_failures }}"
+          - "Warnings: {{ preokd_report.summary.warnings }}"
+          - "JSON report: {{ preokd_json_path }}"
+          - "Markdown report: {{ preokd_md_path }}"
+          - "Tip: run with -e preokd_fail_on_critical=true for strict fail mode."
+
+    - name: Fail when critical OKD prerequisites are not met (strict mode)
+      ansible.builtin.fail:
+        msg: "Pre-install OKD checks failed. See {{ preokd_md_path }}"
+      when:
+        - preokd_fail_on_critical_mode
+        - preokd_critical_failures | length > 0

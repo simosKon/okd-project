@@ -1,0 +1,163 @@
+﻿---
+- name: Configure vcenter after deployment
+  block:
+    - name: Validate AD credentials when AD integration is enabled
+      ansible.builtin.assert:
+        that:
+          - ad_admin_user | default('') | length > 0
+          - ad_admin_password | default('') | length > 0
+        fail_msg: "AD integration enabled but ad_admin_user/ad_admin_password are missing."
+
+    - name: Check current AD join state
+      ansible.builtin.raw: |
+        shell
+        /opt/likewise/bin/domainjoin-cli query || true
+      delegate_to: vcenter
+      register: domain_join_query
+      changed_when: false
+      failed_when: false
+
+    - name: Derive AD join status
+      ansible.builtin.set_fact:
+        vcsa_ad_already_joined: "{{ (network.domain | lower) in (domain_join_query.stdout | default('') | lower) }}"
+
+    - name: Join VCSA to AD using domainjoin-cli
+      ansible.builtin.raw: |
+        shell
+        /opt/likewise/bin/domainjoin-cli join {{ network.domain }} {{ ad_admin_user }} {{ ad_admin_password }}
+      delegate_to: vcenter 
+      register: domain_join_result
+      failed_when: domain_join_result.rc != 0 and 'already joined' not in domain_join_result.stdout
+      changed_when: "'already joined' not in (domain_join_result.stdout | default('') | lower)"
+      when: not vcsa_ad_already_joined
+
+    - name: Stop all vCenter services
+      ansible.builtin.raw: |
+        shell
+        service-control --stop --all
+      delegate_to: vcenter 
+      when: domain_join_result is changed
+
+    - name: Sleep for 60 seconds to allow services to stop
+      ansible.builtin.pause:
+        seconds: 60
+      when: domain_join_result is changed
+
+    - name: Start all vCenter services
+      ansible.builtin.raw: |
+        shell
+        service-control --start --all
+      delegate_to: vcenter
+      when: domain_join_result is changed
+
+    - name: Sleep for 60 seconds to allow services to start
+      ansible.builtin.pause:
+        seconds: 60
+      when: domain_join_result is changed
+  when: (platform_roles.ad_join_enabled | default(false)) | bool
+
+
+- name: Complete SSO AD Integration
+  block:
+    - name: Get current identity sources
+      ansible.builtin.raw: |
+        shell
+        /opt/vmware/bin/sso-config.sh -get_identity_sources
+      delegate_to: vcenter
+      register: current_identity_sources
+      changed_when: false
+
+    - name: Check if nativead identity source exists
+      set_fact:
+        nativead_exists: >-
+          {{
+            ('native ad' in (current_identity_sources.stdout | default('') | lower))
+            or ('nativead' in (current_identity_sources.stdout | default('') | lower))
+          }}
+
+    - name: Add AD Identity Source (Native - Windows Integrated Auth)
+      ansible.builtin.raw: |
+        shell
+        /opt/vmware/bin/sso-config.sh -add_identity_source -type nativead
+      delegate_to: vcenter
+      register: ad_identity_result
+      failed_when:
+        - ad_identity_result.rc != 0
+        - "'already' not in ad_identity_result.stdout and 'exist' not in ad_identity_result.stdout"
+      changed_when: "'already' not in (ad_identity_result.stdout | default('') | lower) and 'exist' not in (ad_identity_result.stdout | default('') | lower)"
+      ignore_errors: true
+      when: not nativead_exists
+
+    - name: Check current default identity sources
+      ansible.builtin.raw: |
+        shell
+        /opt/vmware/bin/sso-config.sh -get_default_identity_sources
+      delegate_to: vcenter
+      register: current_default_identity_sources
+      changed_when: false
+
+    - name: Parse if AD is already default
+      set_fact:
+        ad_is_default: "{{ (network.domain | lower) in (current_default_identity_sources.stdout | default('') | lower) }}"
+
+    - name: Set AD as Default Identity Source
+      ansible.builtin.raw: |
+        shell
+        /opt/vmware/bin/sso-config.sh -set_default_identity_sources -i "{{ network.domain }}"
+      delegate_to: vcenter
+      register: set_default_identity_result
+      changed_when: true
+      when: not ad_is_default
+
+    - name: Verify AD is Default Identity Source
+      ansible.builtin.raw: |
+        shell
+        /opt/vmware/bin/sso-config.sh -get_identity_sources
+      delegate_to: vcenter
+      register: identity_sources
+      changed_when: false
+  when: (platform_roles.ad_join_enabled | default(false)) | bool
+
+
+- name: Configure NTP on vCenter
+  block:
+    - name: Check current ntp.conf for configured servers
+      ansible.builtin.raw: |
+        shell
+        grep '^server' /etc/ntp.conf || true
+      delegate_to: vcenter
+      register: ntp_conf_check
+    
+    - name: Create backup filename
+      ansible.builtin.raw: |
+        shell
+        date +%Y%m%d
+      delegate_to: vcenter
+      register: backup_date
+
+    - name: Backup ntp.conf without cmd substitution
+      ansible.builtin.raw: |
+        shell
+        cp /etc/ntp.conf /etc/ntp.conf.backup.{{ backup_date.stdout_lines[-1] }}
+      delegate_to: vcenter
+
+    - name: Configure NTP if not configured
+      ansible.builtin.raw: |
+        shell
+        echo "server {{ network.ntp_server }} iburst" >> /etc/ntp.conf
+      delegate_to: vcenter
+      when: network.ntp_server not in ntp_conf_check.stdout | default('')
+
+    - name: NTP restart (safe fallback)
+      ansible.builtin.raw: |
+        shell
+        systemctl restart ntpd || pkill -HUP ntpd
+      delegate_to: vcenter
+
+    - name: Verify contents of ntp.conf after modification
+      ansible.builtin.raw: |
+        shell
+        cat /etc/ntp.conf
+      delegate_to: vcenter
+      register: verify_ntp_conf
+  when: (platform_roles.ntp_conf_enabled | default(true)) | bool

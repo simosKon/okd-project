@@ -1,0 +1,23 @@
+[libdefaults]
+default_realm = {{ network.domain | upper }}
+dns_lookup_kdc = true
+dns_lookup_realm = true
+dns_canonicalize_hostname = false
+rdns = false
+ticket_lifetime = 24h
+renew_lifetime = 7d
+forwardable = true
+permitted_enctypes = aes256-cts aes128-cts
+default_tkt_enctypes = aes256-cts aes128-cts
+default_tgs_enctypes = aes256-cts aes128-cts
+default_ccache_name = KEYRING:persistent:%{uid}
+
+[realms]
+{{ network.domain | upper }} = {
+    kdc = {{ infrastructure.ad_server.hostname }}
+    admin_server = {{ infrastructure.ad_server.hostname }}
+}
+
+[domain_realm]
+.{{ network.domain }} = {{ network.domain | upper }}
+{{ network.domain }} = {{ network.domain | upper }}

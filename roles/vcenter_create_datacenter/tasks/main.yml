@@ -1,0 +1,12 @@
+---
+- name: Create DC if not exists
+  vars:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+  community.vmware.vmware_datacenter:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    state: present
+    validate_certs: false
+  delegate_to: localhost

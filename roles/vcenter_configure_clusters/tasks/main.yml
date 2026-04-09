@@ -1,0 +1,81 @@
+---
+- name: Validate required vars for vcenter_configure_clusters
+  ansible.builtin.assert:
+    that:
+      - infrastructure is defined
+      - infrastructure.vcenter is defined
+      - infrastructure.vcenter.ip is defined
+      - vcenter_password | default("") | length > 0
+    fail_msg: "Missing required variables for vcenter_configure_clusters."
+
+- name: Set vCenter cluster configuration defaults
+  ansible.builtin.set_fact:
+    vcenter_datacenter_name: "{{ infrastructure.vcenter.datacenter_name | default('LabDatacenter') }}"
+    vcenter_cluster_drs_enabled: "{{ infrastructure.vcenter.cluster_drs_enabled | default(true) | bool }}"
+    vcenter_cluster_ha_enabled: "{{ infrastructure.vcenter.cluster_ha_enabled | default(false) | bool }}"
+    vcenter_cluster_drs_vmotion_rate: "{{ infrastructure.vcenter.cluster_drs_vmotion_rate | default(3) }}"
+    vcenter_cluster_drs_default_vm_behavior: "{{ infrastructure.vcenter.cluster_drs_default_vm_behavior | default('fullyAutomated') }}"
+
+- name: Build cluster list from vars
+  ansible.builtin.set_fact:
+    vcenter_clusters_to_configure: >-
+      {{
+        infrastructure.vcenter.clusters
+        if (infrastructure.vcenter.clusters is defined and (infrastructure.vcenter.clusters | length > 0))
+        else [infrastructure.vcenter.cluster_name | default('OKD')]
+      }}
+
+- name: Initialize normalized cluster items
+  ansible.builtin.set_fact:
+    vcenter_cluster_items: []
+
+- name: Normalize cluster items to dict format
+  ansible.builtin.set_fact:
+    vcenter_cluster_items: "{{ (vcenter_cluster_items | default([])) + [ (item if item is mapping else {'name': item}) ] }}"
+  loop: "{{ vcenter_clusters_to_configure }}"
+
+- name: Verify vCenter API is reachable
+  community.vmware.vmware_about_info:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+  delegate_to: localhost
+  register: vcenter_about
+  retries: 10
+  delay: 15
+  until: vcenter_about is succeeded
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Configure DRS on cluster(s)
+  community.vmware.vmware_cluster_drs:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    cluster_name: "{{ item.name }}"
+    enable: "{{ vcenter_cluster_drs_enabled }}"
+    drs_vmotion_rate: "{{ vcenter_cluster_drs_vmotion_rate }}"
+    drs_default_vm_behavior: "{{ vcenter_cluster_drs_default_vm_behavior }}"
+  loop: "{{ vcenter_cluster_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+
+- name: Configure HA on cluster(s)
+  community.vmware.vmware_cluster_ha:
+    hostname: "{{ infrastructure.vcenter.ip }}"
+    username: "administrator@vsphere.local"
+    password: "{{ vcenter_password }}"
+    validate_certs: false
+    datacenter_name: "{{ vcenter_datacenter_name }}"
+    cluster_name: "{{ item.name }}"
+    enable: "{{ vcenter_cluster_ha_enabled }}"
+  loop: "{{ vcenter_cluster_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  no_log: "{{ not (vmware_debug | default(false) | bool) }}"
+

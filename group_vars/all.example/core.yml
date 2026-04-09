@@ -1,0 +1,109 @@
+network:
+  base: "10.0.10"
+  prefix: "24"
+  gateway: "10.0.10.1"
+  domain: "example.local"
+  dns_servers:
+    - "10.0.10.10"
+  ntp_server: "10.0.10.13"
+
+storage_backend: "nfs"  # supported: nfs, vsan
+
+infrastructure_core:
+  dns_server:
+    ip: "10.0.10.10"
+    hostname: "dns.example.local"
+
+  haproxy_server:
+    ip: "10.0.10.20"
+    hostname: "haproxy.example.local"
+    interface: ""  # optional; auto-detect when empty
+
+  ad_server:
+    ip: "10.0.10.13"
+    hostname: "ad.example.local"
+
+  ansible_server:
+    ip: "10.0.10.11"
+    hostname: "ansible.example.local"
+    ansible_admin_ssh_key: ""
+
+  nfs_server:
+    ip: "10.0.10.12"
+    hostname: "nfs.example.local"
+    datastore_name: "VMs"
+
+# required only when ad_join_enabled=true or sssd_conf_enabled=true
+sssd_svc:
+  domain_name: "example.local"
+  krb5_realm: "EXAMPLE.LOCAL"
+  krb5_kdc: "10.0.10.13"
+  id_provider: "ad"
+  access_provider: "ad"
+  auth_provider: "ad"
+  chpass_provider: "ad"
+
+# keep secrets in non-committed files (all.yml / vault)
+ad_admin_user: ""
+ad_admin_password: ""
+
+# feature toggles
+platform_roles:
+  ansible_user_enabled: true
+  ntp_conf_enabled: true
+  ad_join_enabled: false
+  sssd_conf_enabled: false
+  vcenter_deploy_enabled: false
+  vcenter_configure_enabled: false
+  vcenter_create_datacenter_enabled: false
+  vcenter_create_clusters_enabled: false
+  vcenter_configure_clusters_enabled: false
+  vcenter_configure_networks_enabled: false
+  vcenter_configure_vds_enabled: false
+  vcenter_configure_vmkernel_enabled: false
+  vcenter_add_esxi_hosts_enabled: false
+  vcenter_join_esxi_cluster_enabled: false
+  vcenter_create_nfs_datastore_enabled: false
+  vcenter_create_vsan_datastore_enabled: false
+  vcenter_configure_templates_enabled: false
+  vcenter_add_licenses_enabled: false
+  nfs_lvm_enabled: false
+  nfs_conf_enabled: false
+
+# firewall profiles used by roles/firewall_conf
+firewall:
+  services:
+    dns:
+      - dns
+    haproxy: []
+    nfs: []
+
+  ports:
+    dns:
+      tcp: [53]
+      udp: [53]
+    haproxy:
+      tcp: [6443, 22623, 80, 443]
+      udp: []
+    nfs:
+      tcp: [111, 2049, 20048]
+      udp: [111, 2049, 20048]
+    sssd_global:
+      tcp: [88, 389, 636, 464]
+      udp: [88, 389, 464]
+
+# haproxy stats endpoint credentials (lab defaults)
+haproxy:
+  stats_port: 8404
+  stats_user: yourusername
+  stats_password: yourpassword
+
+nfs_vm_storage:
+  pv_disks:
+    - /dev/sdb
+  vg_name: "vg_nfs"
+  lv_name: "lv_nfs"
+  lv_size: "100%FREE"
+  fs_type: "xfs"
+  mount_path: "/nfs"
+  export_path: "/nfs"

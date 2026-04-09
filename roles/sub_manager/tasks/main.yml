@@ -1,0 +1,33 @@
+---
+- name: Check if system already registered
+  ansible.builtin.stat:
+    path: /etc/pki/consumer/cert.pem
+  register: rhsm_cert
+
+- name: Register RHEL 9 system with subscription-manager
+  ansible.builtin.command: >
+    subscription-manager register
+    --username={{ rh_username }}
+    --password={{ rh_password }}
+    --auto-attach
+  no_log: true
+  when:
+    - rh_username is defined
+    - rh_password is defined
+    - not rhsm_cert.stat.exists
+
+- name: Enable RHEL 9 repositories
+  ansible.builtin.command: >
+    subscription-manager repos --enable={{ item }}
+  loop:
+    - rhel-9-for-x86_64-baseos-rpms
+    - rhel-9-for-x86_64-appstream-rpms
+  when: rhsm_cert.stat.exists or (rh_username is defined and rh_password is defined)
+
+- name: Check subscription status
+  ansible.builtin.command: subscription-manager status
+  register: sub_status
+  changed_when: false
+
+- debug:
+    msg: "Subscription status: {{ sub_status.stdout }}"

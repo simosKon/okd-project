@@ -1,0 +1,7 @@
+---
+- name: Prepare OKD UPI artifacts (platform none)
+  hosts: localhost
+  gather_facts: true
+  tags: [okd_prepare, okd, ignition]
+  roles:
+    - { role: okd_upi_prepare, tags: [okd_prepare, okd, ignition] }

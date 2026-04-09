@@ -1,0 +1,20 @@
+---
+- name: Install essential packages on RHEL 9.4
+  dnf:
+    name:
+      - vim
+      - wget
+      - curl
+      - net-tools
+      - bind-utils
+      - firewalld
+      - bash-completion
+      - tmux
+      - rsync
+      - unzip
+      - lsof
+      - iproute
+      - lvm2
+      - telnet
+    state: present
+    update_cache: true

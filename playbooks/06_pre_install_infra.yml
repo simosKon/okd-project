@@ -1,0 +1,622 @@
+---
+- name: Pre-install infra prerequisites and report
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - ../vault_vcenter_deploy.yml
+    - ../vault_ad_connect_user.yml
+  vars:
+    preinfra_output_dir: "{{ playbook_dir }}/../reports"
+    preinfra_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
+    preinfra_storage_backend: "{{ storage_backend | default('nfs') }}"
+    preinfra_fail_on_critical_mode: "{{ (preinfra_fail_on_critical | default(false)) | bool }}"
+    preinfra_require_dns_records_mode: "{{ (preinfra_require_dns_records | default(true)) | bool }}"
+    preinfra_require_esxi_mode: "{{ (preinfra_require_esxi | default(true)) | bool }}"
+    preinfra_require_nfs_mode: "{{ (preinfra_require_nfs | default(preinfra_storage_backend == 'nfs')) | bool }}"
+    preinfra_vcenter_deploy_storage_type: "{{ infrastructure.vcenter.deploy_storage_type | default('local_esxi') }}"
+    preinfra_any_vcenter_role_enabled: >-
+      {{
+        (platform_roles.vcenter_deploy_enabled | default(false)) or
+        (platform_roles.vcenter_configure_enabled | default(false)) or
+        (platform_roles.vcenter_create_datacenter_enabled | default(false)) or
+        (platform_roles.vcenter_create_clusters_enabled | default(false)) or
+        (platform_roles.vcenter_add_esxi_hosts_enabled | default(false)) or
+        (platform_roles.vcenter_join_esxi_cluster_enabled | default(false)) or
+        (platform_roles.vcenter_configure_networks_enabled | default(false)) or
+        (platform_roles.vcenter_configure_vds_enabled | default(false)) or
+        (platform_roles.vcenter_configure_vmkernel_enabled | default(false)) or
+        (platform_roles.vcenter_configure_clusters_enabled | default(false)) or
+        (platform_roles.vcenter_create_nfs_datastore_enabled | default(false)) or
+        (platform_roles.vcenter_create_vsan_datastore_enabled | default(false)) or
+        (platform_roles.vcenter_configure_templates_enabled | default(false)) or
+        (platform_roles.vcenter_add_licenses_enabled | default(false))
+      }}
+    preinfra_vcenter_443_required: "{{ preinfra_any_vcenter_role_enabled and not (platform_roles.vcenter_deploy_enabled | default(false)) }}"
+    preinfra_need_esxi_list: >-
+      {{
+        (platform_roles.vcenter_deploy_enabled | default(false)) or
+        (platform_roles.vcenter_add_esxi_hosts_enabled | default(false)) or
+        (platform_roles.vcenter_join_esxi_cluster_enabled | default(false)) or
+        (platform_roles.vcenter_configure_networks_enabled | default(false)) or
+        (platform_roles.vcenter_configure_vmkernel_enabled | default(false)) or
+        (platform_roles.vcenter_configure_vds_enabled | default(false)) or
+        (platform_roles.vcenter_create_nfs_datastore_enabled | default(false)) or
+        (platform_roles.vcenter_create_vsan_datastore_enabled | default(false))
+      }}
+    preinfra_need_esxi_password: >-
+      {{
+        (platform_roles.vcenter_deploy_enabled | default(false)) or
+        (platform_roles.vcenter_add_esxi_hosts_enabled | default(false)) or
+        (platform_roles.vcenter_join_esxi_cluster_enabled | default(false)) or
+        (platform_roles.vcenter_create_vsan_datastore_enabled | default(false))
+      }}
+
+  tasks:
+    - name: Ensure report output directory exists
+      ansible.builtin.file:
+        path: "{{ preinfra_output_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Inventory group checks
+      ansible.builtin.set_fact:
+        chk_dns_group_ok: "{{ (groups['dns'] is defined) and ((groups['dns'] | length) > 0) }}"
+        chk_haproxy_group_ok: "{{ (groups['haproxy'] is defined) and ((groups['haproxy'] | length) > 0) }}"
+        chk_nfs_group_ok: "{{ (groups['nfs'] is defined) and ((groups['nfs'] | length) > 0) }}"
+
+    - name: Variable presence checks
+      ansible.builtin.set_fact:
+        chk_storage_backend_supported: "{{ preinfra_storage_backend in ['nfs', 'vsan'] }}"
+        chk_network_base_defined: "{{ network.base is defined and (network.base | string | length > 0) }}"
+        chk_network_prefix_defined: "{{ network.prefix is defined and (network.prefix | string | length > 0) }}"
+        chk_network_gateway_defined: "{{ network.gateway is defined and (network.gateway | string | length > 0) }}"
+        chk_network_domain_defined: "{{ network.domain is defined and (network.domain | string | length > 0) }}"
+        chk_network_dns_server_defined: "{{ network.dns_servers is defined and (network.dns_servers | length > 0) and ((network.dns_servers[0] | string | length) > 0) }}"
+        chk_dns_ip_defined: "{{ infrastructure.dns_server.ip is defined and (infrastructure.dns_server.ip | string | length > 0) }}"
+        chk_haproxy_ip_defined: "{{ infrastructure.haproxy_server.ip is defined and (infrastructure.haproxy_server.ip | string | length > 0) }}"
+        chk_nfs_ip_defined: "{{ (not preinfra_require_nfs_mode) or (infrastructure.nfs_server.ip is defined and (infrastructure.nfs_server.ip | string | length > 0)) }}"
+        chk_ansible_ip_defined: "{{ infrastructure.ansible_server.ip is defined and (infrastructure.ansible_server.ip | string | length > 0) }}"
+        chk_dns_hostname_defined: "{{ infrastructure.dns_server.hostname is defined and (infrastructure.dns_server.hostname | string | length > 0) }}"
+        chk_ansible_hostname_defined: "{{ infrastructure.ansible_server.hostname is defined and (infrastructure.ansible_server.hostname | string | length > 0) }}"
+        chk_nfs_hostname_defined: "{{ (not preinfra_require_nfs_mode) or (infrastructure.nfs_server.hostname is defined and (infrastructure.nfs_server.hostname | string | length > 0)) }}"
+        chk_vcenter_ip_defined: "{{ (not preinfra_any_vcenter_role_enabled) or (infrastructure.vcenter.ip is defined and (infrastructure.vcenter.ip | string | length > 0)) }}"
+        chk_vcenter_hostname_defined: "{{ (not preinfra_any_vcenter_role_enabled) or (infrastructure.vcenter.hostname is defined and (infrastructure.vcenter.hostname | string | length > 0)) }}"
+        chk_vcenter_name_defined: "{{ (not preinfra_any_vcenter_role_enabled) or (infrastructure.vcenter.name is defined and (infrastructure.vcenter.name | string | length > 0)) }}"
+        chk_vcenter_vcsa_size_defined: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or (infrastructure.vcenter.vcsa_size is defined and (infrastructure.vcenter.vcsa_size | string | length > 0)) }}"
+        chk_esxi_list_defined: "{{ ((not preinfra_need_esxi_list) and (not preinfra_require_esxi_mode)) or (infrastructure.esxi is defined and (infrastructure.esxi | length > 0)) }}"
+        chk_esxi0_hostname_or_ip_defined: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.esxi is defined and (infrastructure.esxi | length > 0)) and (((infrastructure.esxi[0].hostname | default('') | string | length) > 0) or ((infrastructure.esxi[0].ip | default('') | string | length) > 0))) }}"
+        chk_esxi0_username_defined: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.esxi is defined and (infrastructure.esxi | length > 0)) and (infrastructure.esxi[0].username is defined) and (infrastructure.esxi[0].username | string | length > 0)) }}"
+        chk_esxi0_datastore_defined: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.esxi is defined and (infrastructure.esxi | length > 0)) and (infrastructure.esxi[0].datastore is defined) and (infrastructure.esxi[0].datastore | string | length > 0)) }}"
+        chk_vcenter_deploy_storage_type_supported: "{{ preinfra_vcenter_deploy_storage_type in ['local_esxi', 'nfs_pre_mounted'] }}"
+        chk_vcenter_nfs_storage_consistent: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or (preinfra_vcenter_deploy_storage_type != 'nfs_pre_mounted') or (preinfra_storage_backend == 'nfs') }}"
+
+    - name: Check DNS host SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.dns_server.ip }}"
+        port: 22
+        timeout: 3
+      register: dns_ssh_check
+      changed_when: false
+      ignore_errors: true
+      when: chk_dns_ip_defined
+
+    - name: Check DNS service reachability (TCP/53)
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.dns_server.ip }}"
+        port: 53
+        timeout: 3
+      register: dns_53_check
+      changed_when: false
+      ignore_errors: true
+      when: chk_dns_ip_defined
+
+    - name: Check HAProxy host SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.haproxy_server.ip }}"
+        port: 22
+        timeout: 3
+      register: haproxy_ssh_check
+      changed_when: false
+      ignore_errors: true
+      when: chk_haproxy_ip_defined
+
+    - name: Check NFS host SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.nfs_server.ip }}"
+        port: 22
+        timeout: 3
+      register: nfs_ssh_check
+      changed_when: false
+      ignore_errors: true
+      when:
+        - preinfra_require_nfs_mode
+        - chk_nfs_ip_defined
+
+    - name: Check Ansible host SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.ansible_server.ip }}"
+        port: 22
+        timeout: 3
+      register: ansible_ssh_check
+      changed_when: false
+      ignore_errors: true
+      when: chk_ansible_ip_defined
+
+    - name: Build required infra DNS hostnames list
+      ansible.builtin.set_fact:
+        preinfra_required_dns_hosts: >-
+          {{
+            (
+              [
+                (infrastructure.dns_server.hostname | default('')),
+                (infrastructure.ansible_server.hostname | default(''))
+              ]
+              + (([(infrastructure.nfs_server.hostname | default(''))]) if preinfra_require_nfs_mode else [])
+            )
+            | reject('equalto', '')
+            | list
+          }}
+
+    - name: Check DNS records for required infra hosts
+      ansible.builtin.command: "getent hosts {{ item }}"
+      register: infra_dns_records_check
+      changed_when: false
+      ignore_errors: true
+      loop: "{{ preinfra_required_dns_hosts }}"
+      when:
+        - preinfra_require_dns_records_mode
+        - preinfra_required_dns_hosts | length > 0
+
+    - name: Derive DNS record check failures
+      ansible.builtin.set_fact:
+        preinfra_dns_missing_hosts: "{{ (infra_dns_records_check.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+
+    - name: Check ESXi API reachability (TCP/443)
+      ansible.builtin.wait_for:
+        host: "{{ item.ip | default(item.hostname) }}"
+        port: 443
+        timeout: 5
+      register: esxi_443_checks
+      changed_when: false
+      ignore_errors: true
+      loop: "{{ infrastructure.esxi | default([]) }}"
+      loop_control:
+        label: "{{ item.ip | default(item.hostname | default('missing-host')) }}"
+      when:
+        - preinfra_require_esxi_mode
+        - chk_esxi_list_defined
+
+    - name: Check NFS service reachability (TCP/2049)
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.nfs_server.ip }}"
+        port: 2049
+        timeout: 3
+      register: nfs_2049_check
+      changed_when: false
+      ignore_errors: true
+      when:
+        - preinfra_require_nfs_mode
+        - chk_nfs_ip_defined
+
+    - name: Check vCenter API reachability
+      ansible.builtin.wait_for:
+        host: "{{ infrastructure.vcenter.ip }}"
+        port: 443
+        timeout: 5
+      register: vcenter_443_check
+      changed_when: false
+      ignore_errors: true
+      when:
+        - preinfra_any_vcenter_role_enabled
+        - chk_vcenter_ip_defined
+
+    - name: Derive existing vCenter presence
+      ansible.builtin.set_fact:
+        preinfra_vcenter_detected_existing: "{{ chk_vcenter_ip_defined and (vcenter_443_check is defined) and (vcenter_443_check.failed is defined) and (not vcenter_443_check.failed) }}"
+
+    - name: Check VCSA OVA path when deploy role is enabled
+      ansible.builtin.stat:
+        path: "{{ infrastructure.vcenter.vcsa_ova_file | default('') }}"
+      register: vcsa_ova_stat
+      when: platform_roles.vcenter_deploy_enabled | default(false)
+
+    - name: Check community.vmware collection presence when vCenter roles are enabled
+      ansible.builtin.command: ansible-galaxy collection list community.vmware
+      register: vmware_collection_check
+      changed_when: false
+      failed_when: false
+      when: preinfra_any_vcenter_role_enabled
+
+    - name: Credential checks for enabled roles
+      ansible.builtin.set_fact:
+        chk_vcenter_password_ok: "{{ (not preinfra_any_vcenter_role_enabled) or ((vcenter_password | default('') | length > 0) or (infrastructure.vcenter.password | default('') | length > 0)) }}"
+        chk_esxi_password_ok: "{{ (not preinfra_need_esxi_password) or ((esxi_password | default('') | length > 0) or (chk_esxi_list_defined and (infrastructure.esxi[0].password | default('') | length > 0))) }}"
+        chk_ad_creds_ok: "{{ (not (platform_roles.ad_join_enabled | default(false))) or ((ad_admin_user | default('') | length > 0) and (ad_admin_password | default('') | length > 0)) }}"
+
+    - name: Check pre-mounted datastore visibility on all ESXi hosts (nfs_pre_mounted)
+      community.vmware.vmware_datastore_info:
+        hostname: "{{ item.ip | default(item.hostname) }}"
+        username: "{{ item.username }}"
+        password: "{{ item.password | default(esxi_password | default('')) }}"
+        validate_certs: false
+        name: "{{ item.datastore }}"
+      delegate_to: localhost
+      register: esxi_premounted_datastore_checks
+      changed_when: false
+      failed_when: false
+      loop: "{{ infrastructure.esxi | default([]) }}"
+      loop_control:
+        label: "{{ item.ip | default(item.hostname | default('missing-esxi-host')) }}"
+      when:
+        - preinfra_require_nfs_mode
+        - (platform_roles.vcenter_deploy_enabled | default(false))
+        - preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted'
+        - vmware_collection_check is defined
+        - vmware_collection_check.rc == 0
+        - chk_esxi_list_defined
+        - chk_esxi0_username_defined
+        - chk_esxi_password_ok
+
+    - name: Initialize per-ESXi premounted datastore results
+      ansible.builtin.set_fact:
+        preinfra_premounted_datastore_results: []
+
+    - name: Build per-ESXi premounted datastore results
+      ansible.builtin.set_fact:
+        preinfra_premounted_datastore_results: >-
+          {{
+            preinfra_premounted_datastore_results
+            + [
+                {
+                  'target': (item.item.ip | default(item.item.hostname | default('missing-esxi-host'))),
+                  'expected_datastore': (item.item.datastore | default('missing-datastore-name')),
+                  'ok': (
+                    (not (item.failed | default(false)))
+                    and
+                    (
+                      ((item.datastores | default([])) | length > 0)
+                      or
+                      ((item.datastore_info | default([])) | length > 0)
+                    )
+                  )
+                }
+              ]
+          }}
+      loop: "{{ esxi_premounted_datastore_checks.results | default([]) }}"
+
+    - name: Derive pre-mounted datastore validation failures
+      ansible.builtin.set_fact:
+        preinfra_premounted_datastore_failed_count: "{{ (preinfra_premounted_datastore_results | selectattr('ok', 'equalto', false) | list | length) }}"
+
+    - name: Build infra findings and guidance
+      ansible.builtin.set_fact:
+        preinfra_critical_failures: >-
+          {{
+            []
+            + ([] if chk_storage_backend_supported else ['Invalid storage_backend. Allowed: nfs, vsan'])
+            + ([] if chk_network_base_defined else ['Missing var network.base'])
+            + ([] if chk_network_prefix_defined else ['Missing var network.prefix'])
+            + ([] if chk_network_gateway_defined else ['Missing var network.gateway'])
+            + ([] if chk_network_domain_defined else ['Missing var network.domain'])
+            + ([] if chk_network_dns_server_defined else ['Missing var network.dns_servers[0]'])
+            + ([] if chk_dns_group_ok else ['Missing inventory group: dns'])
+            + ([] if chk_haproxy_group_ok else ['Missing inventory group: haproxy'])
+            + ([] if chk_dns_ip_defined else ['Missing var infrastructure.dns_server.ip'])
+            + ([] if chk_ansible_ip_defined else ['Missing var infrastructure.ansible_server.ip'])
+            + ([] if chk_haproxy_ip_defined else ['Missing var infrastructure.haproxy_server.ip'])
+            + ([] if chk_nfs_ip_defined else ['Missing var infrastructure.nfs_server.ip for NFS backend'])
+            + ([] if chk_dns_hostname_defined else ['Missing var infrastructure.dns_server.hostname'])
+            + ([] if chk_ansible_hostname_defined else ['Missing var infrastructure.ansible_server.hostname'])
+            + ([] if chk_nfs_hostname_defined else ['Missing var infrastructure.nfs_server.hostname for NFS backend'])
+            + ([] if chk_vcenter_ip_defined else ['Missing var infrastructure.vcenter.ip while vCenter roles are enabled'])
+            + ([] if chk_vcenter_hostname_defined else ['Missing var infrastructure.vcenter.hostname while vCenter roles are enabled'])
+            + ([] if chk_vcenter_name_defined else ['Missing var infrastructure.vcenter.name while vCenter roles are enabled'])
+            + ([] if chk_vcenter_vcsa_size_defined else ['Missing var infrastructure.vcenter.vcsa_size while vcenter_deploy is enabled'])
+            + ([] if chk_esxi_list_defined else ['Missing infrastructure.esxi list for enabled ESXi/vCenter actions'])
+            + ([] if chk_esxi0_hostname_or_ip_defined else ['Missing infrastructure.esxi[0].hostname or infrastructure.esxi[0].ip for vcenter_deploy'])
+            + ([] if chk_esxi0_username_defined else ['Missing infrastructure.esxi[0].username for vcenter_deploy'])
+            + ([] if chk_esxi0_datastore_defined else ['Missing infrastructure.esxi[0].datastore while vcenter_deploy is enabled'])
+            + ([] if chk_vcenter_deploy_storage_type_supported else ['Invalid infrastructure.vcenter.deploy_storage_type. Allowed: local_esxi, nfs_pre_mounted'])
+            + ([] if chk_vcenter_nfs_storage_consistent else ['vCenter deploy storage type is nfs_pre_mounted but storage_backend is not nfs'])
+            + ([] if (dns_53_check is not defined or dns_53_check.failed is not defined or not dns_53_check.failed) else ['DNS service is not reachable on TCP/53'])
+            + ([] if (ansible_ssh_check is not defined or ansible_ssh_check.failed is not defined or not ansible_ssh_check.failed) else ['Ansible host is not reachable on TCP/22'])
+            + ([] if (not preinfra_require_nfs_mode) else ([] if (nfs_2049_check is not defined or nfs_2049_check.failed is not defined or not nfs_2049_check.failed) else ['NFS service is not reachable on TCP/2049']))
+            + ([] if (not preinfra_require_dns_records_mode or ((preinfra_dns_missing_hosts | default([]) | length) == 0)) else ['Required DNS records are missing for infra hosts: ' + ((preinfra_dns_missing_hosts | default([])) | join(', ')) ])
+            + ([] if (not preinfra_require_esxi_mode) else ([] if (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0)) else ['One or more ESXi hosts are unreachable on TCP/443']))
+            + ([] if (not preinfra_vcenter_443_required) else ([] if (vcenter_443_check is not defined or vcenter_443_check.failed is not defined or not vcenter_443_check.failed) else ['vCenter is not reachable on TCP/443 but existing vCenter is required for enabled roles']))
+            + ([] if (not (platform_roles.vcenter_deploy_enabled | default(false))) else ([] if ((infrastructure.vcenter.vcsa_ova_file | default('') | length > 0) and (vcsa_ova_stat.stat.exists | default(false))) else ['vCenter deploy enabled but vcsa_ova_file is missing/not found']))
+            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted')) else ([] if (vmware_collection_check is defined and vmware_collection_check.rc == 0) else ['Cannot validate nfs_pre_mounted datastore on ESXi: community.vmware is not available on control host']))
+            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted')) else ([] if (chk_esxi_list_defined and chk_esxi0_username_defined and chk_esxi0_datastore_defined and chk_esxi_password_ok) else ['Cannot validate nfs_pre_mounted datastore on ESXi: missing ESXi vars/credentials (esxi list, username, datastore, or esxi_password)']))
+            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (vmware_collection_check is defined and vmware_collection_check.rc == 0))) else ([] if ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) else ['NFS pre-mounted datastore validation failed on one or more ESXi hosts for vcenter_deploy (nfs_pre_mounted mode)']))
+            + ([] if chk_vcenter_password_ok else ['vcenter_password is empty while vCenter roles are enabled'])
+            + ([] if chk_esxi_password_ok else ['esxi_password is empty while ESXi host roles are enabled'])
+            + ([] if chk_ad_creds_ok else ['AD join enabled but ad_admin_user/ad_admin_password are missing'])
+          }}
+        preinfra_warnings: >-
+          {{
+            []
+            + ([] if (not preinfra_any_vcenter_role_enabled) else ([] if (vmware_collection_check is defined and vmware_collection_check.rc == 0) else ['community.vmware collection not detected on control host']))
+            + ([] if (dns_ssh_check is not defined or dns_ssh_check.failed is not defined or not dns_ssh_check.failed) else ['DNS host SSH (TCP/22) is unreachable. This is informational unless your DNS role requires SSH access.'])
+            + ([] if (haproxy_ssh_check is not defined or haproxy_ssh_check.failed is not defined or not haproxy_ssh_check.failed) else ['HAProxy host SSH (TCP/22) is unreachable. This is expected before Terraform provisioning; it is required before OKD install.'])
+            + ([] if (not preinfra_require_nfs_mode) else ([] if (nfs_ssh_check is not defined or nfs_ssh_check.failed is not defined or not nfs_ssh_check.failed) else ['NFS host SSH (TCP/22) is unreachable. NFS readiness is based on TCP/2049.']))
+            + (['NFS inventory group is missing. This is acceptable when NFS is external, but nfs host-level roles in playbooks/00_platform_roles.yml and playbooks/01_core_infra.yml will be skipped/fail if targeted.'] if (preinfra_require_nfs_mode and not chk_nfs_group_ok) else [])
+            + (['vcenter_deploy is enabled: vCenter TCP/443 reachability is not required before first deploy.'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and (vcenter_443_check is defined and vcenter_443_check.failed is defined and vcenter_443_check.failed)) else [])
+            + (['Existing vCenter detected on TCP/443 while vcenter_deploy is enabled. Skip deploy and run only vCenter configure roles.'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and (preinfra_vcenter_detected_existing | default(false))) else [])
+            + (['vCenter deploy target storage: local_esxi (recommended for first bootstrap unless you pre-mounted NFS manually).'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'local_esxi') else [])
+            + (['vCenter deploy target storage: nfs_pre_mounted. Ensure datastore in infrastructure.esxi[*].datastore is already mounted on each ESXi before vcenter_deploy.'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and ((preinfra_premounted_datastore_failed_count | default(0) | int) > 0)) else [])
+            + (['If vCenter itself will be deployed on NFS, pre-mount NFS datastore on standalone ESXi before running vcenter_deploy. Role vcenter_create_nfs_datastore is post-vCenter.'] if (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and ((preinfra_premounted_datastore_failed_count | default(0) | int) > 0)) else [])
+            + (['For post-vCenter datastore attachment, role vcenter_create_nfs_datastore mounts NFS through vCenter.'] if (preinfra_require_nfs_mode and not (platform_roles.vcenter_deploy_enabled | default(false))) else [])
+            + (['When storage_backend=vsan, ensure explicit disk_groups and SSD-marked cache disk in nested ESXi.'] if preinfra_storage_backend == 'vsan' else [])
+          }}
+        preinfra_recommendations: >-
+          {{
+            []
+            + ([] if chk_storage_backend_supported else ['Set storage_backend to nfs or vsan in group_vars/all/core.yml'])
+            + ([] if chk_network_base_defined else ['Set network.base'])
+            + ([] if chk_network_prefix_defined else ['Set network.prefix'])
+            + ([] if chk_network_gateway_defined else ['Set network.gateway'])
+            + ([] if chk_network_domain_defined else ['Set network.domain'])
+            + ([] if chk_network_dns_server_defined else ['Set network.dns_servers[0]'])
+            + ([] if chk_dns_ip_defined else ['Set infrastructure.dns_server.ip'])
+            + ([] if chk_ansible_ip_defined else ['Set infrastructure.ansible_server.ip'])
+            + ([] if chk_haproxy_ip_defined else ['Set infrastructure.haproxy_server.ip'])
+            + ([] if chk_nfs_ip_defined else ['Set infrastructure.nfs_server.ip (for NFS backend)'])
+            + ([] if chk_dns_hostname_defined else ['Set infrastructure.dns_server.hostname'])
+            + ([] if chk_ansible_hostname_defined else ['Set infrastructure.ansible_server.hostname'])
+            + ([] if chk_nfs_hostname_defined else ['Set infrastructure.nfs_server.hostname (for NFS backend)'])
+            + ([] if (preinfra_storage_backend != 'nfs' or chk_nfs_group_ok) else ['Optional: add inventory group [nfs] if you want to run nfs host roles from this repo'])
+            + ([] if (ansible_ssh_check is not defined or ansible_ssh_check.failed is not defined or not ansible_ssh_check.failed) else ['Ensure ansible_server is reachable on TCP/22 from control host'])
+            + ([] if (not preinfra_require_dns_records_mode or ((preinfra_dns_missing_hosts | default([]) | length) == 0)) else ['Create/fix DNS records for: ' + ((preinfra_dns_missing_hosts | default([])) | join(', '))])
+            + ([] if (not preinfra_require_esxi_mode or (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0))) else ['Ensure all ESXi hosts are reachable on TCP/443 and listed correctly in infrastructure.esxi'])
+            + ([] if (not preinfra_require_nfs_mode or (nfs_2049_check is not defined or nfs_2049_check.failed is not defined or not nfs_2049_check.failed)) else ['Ensure NFS service is listening and reachable on TCP/2049'])
+            + ([] if chk_vcenter_ip_defined else ['Set infrastructure.vcenter.ip'])
+            + ([] if chk_vcenter_hostname_defined else ['Set infrastructure.vcenter.hostname'])
+            + ([] if chk_vcenter_name_defined else ['Set infrastructure.vcenter.name'])
+            + ([] if chk_vcenter_vcsa_size_defined else ['Set infrastructure.vcenter.vcsa_size'])
+            + ([] if chk_esxi_list_defined else ['Define infrastructure.esxi list with at least one ESXi host when vCenter/ESXi roles are enabled'])
+            + ([] if chk_esxi0_hostname_or_ip_defined else ['Set infrastructure.esxi[0].hostname or infrastructure.esxi[0].ip'])
+            + ([] if chk_esxi0_username_defined else ['Set infrastructure.esxi[0].username'])
+            + ([] if chk_esxi0_datastore_defined else ['Set infrastructure.esxi[0].datastore'])
+            + ([] if chk_vcenter_deploy_storage_type_supported else ['Set infrastructure.vcenter.deploy_storage_type to local_esxi or nfs_pre_mounted'])
+            + ([] if chk_vcenter_nfs_storage_consistent else ['When deploy_storage_type=nfs_pre_mounted use storage_backend=nfs'])
+            + ([] if (not ((platform_roles.vcenter_deploy_enabled | default(false)) and (preinfra_vcenter_detected_existing | default(false)))) else ['vCenter already exists. Set platform_roles.vcenter_deploy_enabled=false and keep only required vCenter configure roles enabled.'])
+            + (['All required infra vars look OK for current enabled toggles.'] if (
+                chk_storage_backend_supported and
+                chk_network_base_defined and
+                chk_network_prefix_defined and
+                chk_network_gateway_defined and
+                chk_network_domain_defined and
+                chk_network_dns_server_defined and
+                chk_dns_ip_defined and
+                chk_ansible_ip_defined and
+                chk_haproxy_ip_defined and
+                chk_nfs_ip_defined and
+                chk_dns_hostname_defined and
+                chk_ansible_hostname_defined and
+                chk_nfs_hostname_defined and
+                chk_vcenter_ip_defined and
+                chk_vcenter_hostname_defined and
+                chk_vcenter_name_defined and
+                chk_vcenter_vcsa_size_defined and
+                chk_esxi_list_defined and
+                chk_esxi0_hostname_or_ip_defined and
+                chk_esxi0_username_defined and
+                chk_esxi0_datastore_defined and
+                chk_vcenter_deploy_storage_type_supported and
+                chk_vcenter_nfs_storage_consistent and
+                ((not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.vcenter.vcsa_ova_file | default('') | length > 0) and (vcsa_ova_stat.stat.exists | default(false)))) and
+                chk_vcenter_password_ok and
+                chk_esxi_password_ok and
+                chk_ad_creds_ok
+              ) else [])
+          }}
+        preinfra_diagnostic_hints:
+          - "If a host appears unreachable, also verify routing and gateway from control host (ip route / traceroute)."
+          - "Check firewall/security groups on both sides (control host and target host) for required ports."
+          - "Validate VLAN/portgroup assignment and NIC binding on ESXi/VM."
+          - "Validate DNS forward and reverse records for infra hosts and vCenter."
+          - "If vCenter API check fails, verify service health directly on vCenter (5480/443) and not only network reachability."
+
+    - name: Build readiness gates and execution intent
+      ansible.builtin.set_fact:
+        preinfra_gate_dns_host_ready: "{{ chk_dns_ip_defined and ((dns_53_check is not defined) or (dns_53_check.failed is not defined) or (not dns_53_check.failed)) }}"
+        preinfra_gate_ansible_host_ready: "{{ chk_ansible_ip_defined and ((ansible_ssh_check is not defined) or (ansible_ssh_check.failed is not defined) or (not ansible_ssh_check.failed)) }}"
+        preinfra_gate_nfs_ready: "{{ (not preinfra_require_nfs_mode) or (chk_nfs_ip_defined and ((nfs_2049_check is not defined) or (nfs_2049_check.failed is not defined) or (not nfs_2049_check.failed))) }}"
+        preinfra_gate_dns_records_ready: "{{ (not preinfra_require_dns_records_mode) or ((preinfra_dns_missing_hosts | default([]) | length) == 0) }}"
+        preinfra_gate_esxi_ready: "{{ (not preinfra_require_esxi_mode) or (chk_esxi_list_defined and chk_esxi_password_ok and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0)) }}"
+        preinfra_execution_intent: >-
+          {{
+            []
+            + ['Infrastructure preparation: DNS configuration'] 
+            + (['Infrastructure preparation: NFS configuration'] if preinfra_require_nfs_mode else ['Infrastructure preparation: NFS configuration skipped'])
+            + (['Infrastructure preparation: ESXi validation'] if preinfra_require_esxi_mode else ['Infrastructure preparation: ESXi validation skipped'])
+            + (
+                ['Infrastructure preparation: Existing vCenter detected; skip vcenter_deploy and run vCenter configure roles only (00_platform_roles.yml)']
+                if (preinfra_any_vcenter_role_enabled and (platform_roles.vcenter_deploy_enabled | default(false)) and (preinfra_vcenter_detected_existing | default(false)))
+                else (
+                  ['Infrastructure preparation: vCenter deployment/configuration (00_platform_roles.yml)']
+                  if preinfra_any_vcenter_role_enabled
+                  else ['Infrastructure preparation: vCenter deployment/configuration skipped']
+                )
+              )
+            + ['Load balancer provisioning: HAProxy VM provisioned via Terraform']
+            + ['OKD phase: UPI prepare -> bootstrap -> control plane -> worker join']
+          }}
+
+    - name: Build infra report
+      ansible.builtin.set_fact:
+        preinfra_report:
+          generated_at: "{{ ansible_date_time.iso8601 }}"
+          stage: "pre_install_infra"
+          summary:
+            status: "{{ 'PASS' if (preinfra_critical_failures | length == 0) else 'FAIL' }}"
+            critical_failures: "{{ preinfra_critical_failures | length }}"
+            warnings: "{{ preinfra_warnings | length }}"
+          context:
+            storage_backend: "{{ preinfra_storage_backend }}"
+            vcenter_deploy_storage_type: "{{ preinfra_vcenter_deploy_storage_type }}"
+            vcenter_roles_enabled: "{{ preinfra_any_vcenter_role_enabled }}"
+            vcenter_existing_detected: "{{ preinfra_vcenter_detected_existing | default(false) }}"
+            require_dns_records: "{{ preinfra_require_dns_records_mode }}"
+            require_esxi: "{{ preinfra_require_esxi_mode }}"
+            require_nfs: "{{ preinfra_require_nfs_mode }}"
+          execution_intent: "{{ preinfra_execution_intent }}"
+          critical_failures: "{{ preinfra_critical_failures }}"
+          warnings: "{{ preinfra_warnings }}"
+          recommendations: "{{ preinfra_recommendations }}"
+          diagnostic_hints: "{{ preinfra_diagnostic_hints }}"
+          readiness_gates:
+            dns_host_ready: "{{ preinfra_gate_dns_host_ready }}"
+            ansible_host_ready: "{{ preinfra_gate_ansible_host_ready }}"
+            nfs_ready: "{{ preinfra_gate_nfs_ready }}"
+            dns_records_ready: "{{ preinfra_gate_dns_records_ready }}"
+            esxi_ready: "{{ preinfra_gate_esxi_ready }}"
+          details:
+            premounted_datastore_results: "{{ preinfra_premounted_datastore_results | default([]) }}"
+          checks:
+            storage_backend_supported: "{{ chk_storage_backend_supported }}"
+            network_base_defined: "{{ chk_network_base_defined }}"
+            network_prefix_defined: "{{ chk_network_prefix_defined }}"
+            network_gateway_defined: "{{ chk_network_gateway_defined }}"
+            network_domain_defined: "{{ chk_network_domain_defined }}"
+            network_dns_server_defined: "{{ chk_network_dns_server_defined }}"
+            dns_group_ok: "{{ chk_dns_group_ok }}"
+            haproxy_group_ok: "{{ chk_haproxy_group_ok }}"
+            nfs_group_ok: "{{ chk_nfs_group_ok }}"
+            dns_ip_defined: "{{ chk_dns_ip_defined }}"
+            ansible_ip_defined: "{{ chk_ansible_ip_defined }}"
+            haproxy_ip_defined: "{{ chk_haproxy_ip_defined }}"
+            nfs_ip_defined: "{{ chk_nfs_ip_defined }}"
+            dns_hostname_defined: "{{ chk_dns_hostname_defined }}"
+            ansible_hostname_defined: "{{ chk_ansible_hostname_defined }}"
+            nfs_hostname_defined: "{{ chk_nfs_hostname_defined }}"
+            vcenter_ip_defined: "{{ chk_vcenter_ip_defined }}"
+            vcenter_existing_detected: "{{ preinfra_vcenter_detected_existing | default(false) }}"
+            dns_service_53_reachable: "{{ (dns_53_check is not defined) or (dns_53_check.failed is not defined) or (not dns_53_check.failed) }}"
+            dns_ssh_reachable: "{{ (dns_ssh_check is not defined) or (dns_ssh_check.failed is not defined) or (not dns_ssh_check.failed) }}"
+            ansible_ssh_reachable: "{{ (ansible_ssh_check is not defined) or (ansible_ssh_check.failed is not defined) or (not ansible_ssh_check.failed) }}"
+            haproxy_ssh_reachable: "{{ (haproxy_ssh_check is not defined) or (haproxy_ssh_check.failed is not defined) or (not haproxy_ssh_check.failed) }}"
+            nfs_ssh_reachable: "{{ (not preinfra_require_nfs_mode) or ((nfs_ssh_check is not defined) or (nfs_ssh_check.failed is not defined) or (not nfs_ssh_check.failed)) }}"
+            nfs_2049_reachable: "{{ (not preinfra_require_nfs_mode) or ((nfs_2049_check is not defined) or (nfs_2049_check.failed is not defined) or (not nfs_2049_check.failed)) }}"
+            required_dns_records_resolve: "{{ (not preinfra_require_dns_records_mode) or ((preinfra_dns_missing_hosts | default([]) | length) == 0) }}"
+            esxi_443_reachable: "{{ (not preinfra_require_esxi_mode) or (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0)) }}"
+            vcenter_443_required: "{{ preinfra_vcenter_443_required }}"
+            vcenter_443_reachable: "{{ (not preinfra_vcenter_443_required) or ((vcenter_443_check is not defined) or (vcenter_443_check.failed is not defined) or (not vcenter_443_check.failed)) }}"
+            vcsa_ova_file_present: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.vcenter.vcsa_ova_file | default('') | length > 0) and (vcsa_ova_stat.stat.exists | default(false))) }}"
+            community_vmware_present: "{{ (not preinfra_any_vcenter_role_enabled) or (vmware_collection_check is defined and vmware_collection_check.rc == 0) }}"
+            premounted_datastore_check_ok: "{{ (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (vmware_collection_check is defined and vmware_collection_check.rc == 0))) or ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) }}"
+            vcenter_password_ok: "{{ chk_vcenter_password_ok }}"
+            esxi_password_ok: "{{ chk_esxi_password_ok }}"
+            ad_creds_ok: "{{ chk_ad_creds_ok }}"
+            esxi0_hostname_or_ip_defined: "{{ chk_esxi0_hostname_or_ip_defined }}"
+            esxi0_username_defined: "{{ chk_esxi0_username_defined }}"
+            vcenter_deploy_storage_type_supported: "{{ chk_vcenter_deploy_storage_type_supported }}"
+            vcenter_nfs_storage_consistent: "{{ chk_vcenter_nfs_storage_consistent }}"
+
+    - name: Build infra report file paths
+      ansible.builtin.set_fact:
+        preinfra_json_path: "{{ preinfra_output_dir }}/pre-install-infra-{{ preinfra_timestamp }}.json"
+        preinfra_md_path: "{{ preinfra_output_dir }}/pre-install-infra-{{ preinfra_timestamp }}.md"
+        preinfra_json_latest_path: "{{ preinfra_output_dir }}/pre-install-infra-latest.json"
+        preinfra_md_latest_path: "{{ preinfra_output_dir }}/pre-install-infra-latest.md"
+
+    - name: Write infra JSON reports
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        mode: "0644"
+        content: "{{ preinfra_report | to_nice_json }}"
+      loop:
+        - "{{ preinfra_json_path }}"
+        - "{{ preinfra_json_latest_path }}"
+
+    - name: Write infra Markdown reports
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        mode: "0644"
+        content: |
+          # Pre-Install Infra Report
+          - Generated at: {{ preinfra_report.generated_at }}
+          - Status: **{{ preinfra_report.summary.status }}**
+          - Storage backend: `{{ preinfra_report.context.storage_backend }}`
+          - vCenter deploy storage type: `{{ preinfra_report.context.vcenter_deploy_storage_type }}`
+          - vCenter roles enabled: `{{ preinfra_report.context.vcenter_roles_enabled }}`
+          - Existing vCenter detected on 443: `{{ preinfra_report.context.vcenter_existing_detected }}`
+          - Require DNS record checks: `{{ preinfra_report.context.require_dns_records }}`
+          - Require ESXi checks: `{{ preinfra_report.context.require_esxi }}`
+          - Require NFS checks: `{{ preinfra_report.context.require_nfs }}`
+          - Critical failures: {{ preinfra_report.summary.critical_failures }}
+          - Warnings: {{ preinfra_report.summary.warnings }}
+
+          ## What This Run Intends To Build
+          {% for x in preinfra_report.execution_intent %}
+          - {{ x }}
+          {% endfor %}
+
+          ## Readiness Gates
+          - DNS service reachable (TCP/53): **{{ 'PASS' if preinfra_report.readiness_gates.dns_host_ready else 'FAIL' }}**
+          - Ansible host reachable: **{{ 'PASS' if preinfra_report.readiness_gates.ansible_host_ready else 'FAIL' }}**
+          - NFS readiness: **{{ 'PASS' if preinfra_report.readiness_gates.nfs_ready else 'FAIL' }}**
+          - DNS records for required infra hosts: **{{ 'PASS' if preinfra_report.readiness_gates.dns_records_ready else 'FAIL' }}**
+          - ESXi reachability: **{{ 'PASS' if preinfra_report.readiness_gates.esxi_ready else 'FAIL' }}**
+
+          ## nfs_pre_mounted Datastore Check (per ESXi)
+          {% if preinfra_report.details.premounted_datastore_results | default([]) | length == 0 %}
+          - not executed
+          {% else %}
+          {% for x in preinfra_report.details.premounted_datastore_results %}
+          - {{ x.target }} (expected datastore: `{{ x.expected_datastore }}`): **{{ 'PASS' if x.ok else 'FAIL' }}**
+          {% endfor %}
+          {% endif %}
+
+          ## Critical Failures
+          {% if preinfra_report.critical_failures | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preinfra_report.critical_failures %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Warnings
+          {% if preinfra_report.warnings | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preinfra_report.warnings %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Recommendations
+          {% if preinfra_report.recommendations | length == 0 %}
+          - none
+          {% else %}
+          {% for x in preinfra_report.recommendations %}
+          - {{ x }}
+          {% endfor %}
+          {% endif %}
+
+          ## Additional Diagnostic Hints
+          {% for x in preinfra_report.diagnostic_hints %}
+          - {{ x }}
+          {% endfor %}
+      loop:
+        - "{{ preinfra_md_path }}"
+        - "{{ preinfra_md_latest_path }}"
+
+    - name: Print infra report summary
+      ansible.builtin.debug:
+        msg:
+          - "Pre-install infra status: {{ preinfra_report.summary.status }}"
+          - "Go/No-Go: Continue only when status is PASS."
+          - "Critical failures: {{ preinfra_report.summary.critical_failures }}"
+          - "Warnings: {{ preinfra_report.summary.warnings }}"
+          - "JSON report: {{ preinfra_json_path }}"
+          - "Markdown report: {{ preinfra_md_path }}"
+          - "Tip: run with -e preinfra_fail_on_critical=true for strict fail mode."
+
+    - name: Fail when critical infra prerequisites are not met (strict mode)
+      ansible.builtin.fail:
+        msg: "Pre-install infra checks failed. See {{ preinfra_md_path }}"
+      when:
+        - preinfra_fail_on_critical_mode
+        - preinfra_critical_failures | length > 0

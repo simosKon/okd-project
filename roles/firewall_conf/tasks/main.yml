@@ -1,0 +1,98 @@
+﻿---
+- name: Start and enable firewalld
+  systemd:
+    name: firewalld
+    state: started
+    enabled: yes
+
+- name: Build firewall services list for current host/profile
+  set_fact:
+    firewall_services_list: >-
+      {{
+        (
+          firewall.services[firewall_profile]
+          if (firewall.services is mapping and firewall_profile is defined and firewall_profile in firewall.services)
+          else (
+            firewall.services
+            if (firewall.services is sequence and firewall.services is not string)
+            else []
+          )
+        )
+      }}
+
+- name: Build profile-specific firewall ports
+  set_fact:
+    firewall_profile_tcp_ports: >-
+      {{
+        (
+          firewall.ports[firewall_profile].tcp
+          if (
+            firewall.ports is mapping and firewall_profile is defined and
+            firewall_profile in firewall.ports and firewall.ports[firewall_profile] is mapping and
+            'tcp' in firewall.ports[firewall_profile]
+          )
+          else (
+            firewall.ports[inventory_hostname].tcp
+            if (
+              firewall.ports is mapping and inventory_hostname in firewall.ports and
+              firewall.ports[inventory_hostname] is mapping and
+              'tcp' in firewall.ports[inventory_hostname]
+            )
+            else []
+          )
+        )
+      }}
+    firewall_profile_udp_ports: >-
+      {{
+        (
+          firewall.ports[firewall_profile].udp
+          if (
+            firewall.ports is mapping and firewall_profile is defined and
+            firewall_profile in firewall.ports and firewall.ports[firewall_profile] is mapping and
+            'udp' in firewall.ports[firewall_profile]
+          )
+          else (
+            firewall.ports[inventory_hostname].udp
+            if (
+              firewall.ports is mapping and inventory_hostname in firewall.ports and
+              firewall.ports[inventory_hostname] is mapping and
+              'udp' in firewall.ports[inventory_hostname]
+            )
+            else []
+          )
+        )
+      }}
+
+- name: Build global firewall ports (legacy compatible)
+  set_fact:
+    firewall_global_tcp_ports: "{{ firewall.ports.sssd_global.tcp | default([]) }}"
+    firewall_global_udp_ports: "{{ firewall.ports.sssd_global.udp | default([]) }}"
+
+- name: Build final firewall port lists
+  set_fact:
+    firewall_tcp_ports: "{{ (firewall_profile_tcp_ports + firewall_global_tcp_ports) | unique }}"
+    firewall_udp_ports: "{{ (firewall_profile_udp_ports + firewall_global_udp_ports) | unique }}"
+
+- name: Open firewall services
+  firewalld:
+    service: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ firewall_services_list }}"
+
+- name: Open TCP ports
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ firewall_tcp_ports }}"
+
+- name: Open UDP ports
+  firewalld:
+    port: "{{ item }}/udp"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ firewall_udp_ports }}"
