@@ -34,7 +34,7 @@ variable "folder" {
 
 variable "template_name" {
   type    = string
-  default = "rhel_9.4"
+  default = "rhel_9.4-template"
 }
 
 variable "cpu" {

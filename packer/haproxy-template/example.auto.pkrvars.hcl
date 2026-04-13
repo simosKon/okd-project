@@ -8,7 +8,7 @@ datastore  = "NFS-OKD"
 network    = "VM Network"
 folder     = "OKD"
 
-template_name = "rhel_9.4"
+template_name = "rhel_9.4-template"
 cpu           = 2
 memory        = 4096
 disk_size_mb  = 20480
