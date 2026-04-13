@@ -61,6 +61,12 @@ variable "haproxy_name" {
   default = "haproxy"
 }
 
+variable "guest_domain" {
+  type        = string
+  default     = "localdomain"
+  description = "Guest OS DNS domain used during vSphere clone customization."
+}
+
 variable "haproxy_mac_address" {
   type        = string
   description = "Static MAC for HAProxy VM"
@@ -140,6 +146,15 @@ resource "vsphere_virtual_machine" "haproxy" {
 
   clone {
     template_uuid = data.vsphere_virtual_machine.template.id
+
+    customize {
+      linux_options {
+        host_name = substr(var.haproxy_name, 0, 63)
+        domain    = var.guest_domain
+      }
+
+      network_interface {}
+    }
   }
 
   extra_config = {

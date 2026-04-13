@@ -9,6 +9,7 @@ cluster       = "OKD"
 datastore     = "NFS-OKD"
 network       = "VM Network"
 template_name = "rocky9-template"
+guest_domain  = "lab.local"
 
 # haproxy vm settings
 haproxy_name        = "haproxy"
