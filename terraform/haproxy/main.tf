@@ -110,18 +110,11 @@ locals {
   vm_folder_enabled = local.vm_folder_name != ""
 }
 
-resource "vsphere_folder" "vm_folder" {
-  count         = local.vm_folder_enabled ? 1 : 0
-  path          = local.vm_folder_name
-  type          = "vm"
-  datacenter_id = data.vsphere_datacenter.dc.id
-}
-
 resource "vsphere_virtual_machine" "haproxy" {
   name             = var.haproxy_name
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
   datastore_id     = data.vsphere_datastore.datastore.id
-  folder           = local.vm_folder_enabled ? vsphere_folder.vm_folder[0].path : null
+  folder           = local.vm_folder_enabled ? local.vm_folder_name : null
 
   num_cpus = var.haproxy_cpu
   memory   = var.haproxy_memory_mb

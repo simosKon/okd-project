@@ -32,8 +32,9 @@ fi
 if [[ -n "${VM_FOLDER:-}" ]]; then
   folder_path="/${GOVC_DATACENTER}/vm/${VM_FOLDER}"
   if ! govc folder.info "$folder_path" >/dev/null 2>&1; then
-    echo "Creating VM folder: $folder_path"
-    govc folder.create "$folder_path"
+    echo "ERROR: required VM folder does not exist: $folder_path" >&2
+    echo "Run terraform/foundation first so shared automation owns the folder." >&2
+    exit 1
   fi
 fi
 

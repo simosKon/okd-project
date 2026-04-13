@@ -11,6 +11,16 @@ This directory automates creation of:
 - `packer` installed (`hashicorp/packer`)
 - vCenter credentials with permissions to create VM/template/folder
 - The host running `packer build` must allow inbound TCP access from the installer VM network to the temporary Packer HTTP server range `8600-8610`
+- For a fully automated pipeline, create the shared VM folder first with `terraform/foundation`
+- Run `terraform/foundation` before Packer whenever `VM_FOLDER` or `folder` is set and you want templates to be placed there
+
+```bash
+cd terraform/foundation
+cp terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars
+terraform init
+terraform apply
+```
 
 ## 1) OKD Template (OVA -> Template)
 
@@ -23,6 +33,8 @@ cp okd-template.env.example okd-template.env
 source okd-template.env
 bash build_ova_template.sh
 ```
+
+If `VM_FOLDER` is set in `okd-template.env`, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder.
 
 ## 2) HAProxy Template (ISO -> VM -> Template)
 
@@ -51,6 +63,7 @@ Notes:
 - The RHEL unattended install fetches `http/ks.cfg` from the temporary Packer HTTP server.
 - The host running `packer build` must be reachable by the guest on TCP ports `8600-8610`.
 - If `firewalld` or another firewall blocks that range, the installer will fail with `failed to fetch kickstart` / `No route to host`.
+- If you set `folder` in `auto.pkrvars.hcl`, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder, so run it before this Packer build.
 
 ## Enterprise Pattern (Reference)
 

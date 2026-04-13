@@ -1,0 +1,6 @@
+# vSphere credentials (set password via env var: TF_VAR_vsphere_password)
+vsphere_user   = "administrator@vsphere.local"
+vsphere_server = "192.168.1.10"
+
+datacenter = "LabDatacenter"
+vm_folder  = "OKD"

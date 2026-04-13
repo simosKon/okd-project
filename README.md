@@ -139,8 +139,17 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml
 - HAProxy template used in this lab: `rhel_9.4`
 - Prerequisite: Terraform requires an existing VM template in vCenter (`template_name`) before provisioning can run
 - If you want template creation to be automated, use **Section 14 (Template Build Automation)**.
+- If you want the templates and later VMs to live inside the shared vSphere folder (for example `OKD`), run `terraform/foundation` before any Packer or Terraform workload stack.
 
 ```bash
+cd terraform/foundation
+cp terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars
+terraform init
+terraform validate
+terraform plan
+terraform apply
+
 cd terraform/haproxy
 terraform init
 terraform validate
@@ -159,6 +168,7 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml --tags "baseline, 
 - OKD version used in this lab: `4.18.0-okd-scos.10`
 - VM template used for bootstrap/masters/workers: `fedora-coreos-39.20231101.3.0`
 - If you want template creation to be automated, use **Section 14 (Template Build Automation)**.
+- If you want the templates and cluster VMs to live inside the shared vSphere folder (for example `OKD`), run `terraform/foundation` before any Packer or Terraform workload stack.
 
 ```bash
 ansible-playbook -i inventory.ini playbooks/02_okd_upi_prepare.yml
@@ -178,6 +188,10 @@ ansible-playbook -i inventory.ini playbooks/03_post_bootstrap_haproxy.yml
 /root/okd-tools/openshift-install --dir /root/okd-install wait-for install-complete --log-level=debug
 ansible-playbook -i inventory.ini playbooks/05_post_install_validation.yml
 ```
+
+Note:
+- `terraform/foundation` is the single owner of the shared vSphere VM folder (for example `OKD`).
+- `terraform/haproxy` and `terraform/okd` only place VMs into that folder; they do not create it.
 
 ## 5. Notes for This Repo
 
