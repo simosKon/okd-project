@@ -39,14 +39,16 @@ source "vsphere-iso" "rhel94_haproxy" {
   cdrom_type = "sata"
 
   http_directory = "http"
+  http_port_min  = 8600
+  http_port_max  = 8610
 
-  boot_wait = "5s"
+  boot_wait = "15s"
+  boot_keygroup_interval = "750ms"
   boot_command = [
     "<up><wait>",
-    "e<wait>",
-    "<down><down><down><end>",
-    " inst.text inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg",
-    "<ctrl-x>"
+    "<tab><wait>",
+    " inst.text ip=dhcp inst.ks=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ks.cfg inst.nomediacheck",
+    "<enter>"
   ]
 
   communicator   = "ssh"
@@ -64,10 +66,9 @@ build {
 
   provisioner "shell" {
     inline = [
-      "dnf -y update",
-      "dnf -y install open-vm-tools cloud-init qemu-guest-agent",
-      "systemctl enable vmtoolsd qemu-guest-agent",
-      "dnf clean all",
+      "systemctl enable vmtoolsd qemu-guest-agent sshd",
+      "cloud-init clean --logs || true",
+      "dnf clean all || true",
       "rm -f /etc/ssh/ssh_host_*",
       "truncate -s 0 /etc/machine-id"
     ]

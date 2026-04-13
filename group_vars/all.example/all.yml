@@ -1,1 +1,1 @@
-infrastructure: "{{ infrastructure_core | default({}) | combine(infrastructure_vcenter | default({}), recursive=True) | combine(infrastructure_okd | default({}), recursive=True) }}"
+infrastructure: "{{ infrastructure_core | default({}) | combine(infrastructure_vcenter | default({}), recursive=True) | combine(infrastructure_okd | default({}), recursive=True) | combine(infrastructure_packer | default({}), recursive=True) }}"

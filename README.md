@@ -336,6 +336,7 @@ Default target template name: `fedora-coreos-39.20231101.3.0`.
 ```bash
 cd packer/haproxy-template
 # set GOVC_* + ISO_* env vars, then:
+source iso-upload.env (all env vars)
 bash upload_iso.sh
 
 cp example.auto.pkrvars.hcl auto.pkrvars.hcl
@@ -346,3 +347,9 @@ packer build -var-file=auto.pkrvars.hcl .
 ```
 
 Default target template name: `rhel_9.4`.
+
+Important:
+
+- The host that runs `packer build` serves `packer/haproxy-template/http/ks.cfg` over a temporary HTTP server during the RHEL install.
+- That host must allow inbound TCP access from the installer VM network to ports `8600-8610`.
+- Keep `group_vars/all/core.yml` and `group_vars/all.example/core.yml` aligned with the `infrastructure_packer.http.port_min` / `port_max` values when you change the allowed range.

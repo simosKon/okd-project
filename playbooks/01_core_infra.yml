@@ -24,6 +24,13 @@
     - { role: ntp_conf, when: platform_roles.ntp_conf_enabled | bool, tags: [core_infra, baseline, ntp] }
     - { role: sssd_conf, when: (platform_roles.ad_join_enabled | bool) or (platform_roles.sssd_conf_enabled | bool), tags: [core_infra, baseline, sssd] }
 
+- name: Configure Ansible control host firewall
+  hosts: ansible
+  become: true
+  tags: [core_infra, ansible, firewall]
+  roles:
+    - { role: firewall_conf, firewall_profile: ansible, tags: [core_infra, ansible, firewall] }
+
 - name: Configure HAProxy
   hosts: haproxy
   become: true

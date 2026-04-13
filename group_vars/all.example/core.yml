@@ -28,6 +28,14 @@ infrastructure_core:
     hostname: "ansible.example.local"
     ansible_admin_ssh_key: ""
 
+infrastructure_packer:
+  host:
+    ip: "10.0.10.11"
+    hostname: "ansible.example.local"
+  http:
+    port_min: 8600
+    port_max: 8610
+
   nfs_server:
     ip: "10.0.10.12"
     hostname: "nfs.example.local"
@@ -74,6 +82,7 @@ firewall:
   services:
     dns:
       - dns
+    ansible: []
     haproxy: []
     nfs: []
 
@@ -81,6 +90,9 @@ firewall:
     dns:
       tcp: [53]
       udp: [53]
+    ansible:
+      tcp: [8600, 8601, 8602, 8603, 8604, 8605, 8606, 8607, 8608, 8609, 8610]
+      udp: []
     haproxy:
       tcp: [6443, 22623, 80, 443]
       udp: []

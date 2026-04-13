@@ -10,6 +10,7 @@ This directory automates creation of:
 - `govc` installed and reachable in `PATH`
 - `packer` installed (`hashicorp/packer`)
 - vCenter credentials with permissions to create VM/template/folder
+- The host running `packer build` must allow inbound TCP access from the installer VM network to the temporary Packer HTTP server range `8600-8610`
 
 ## 1) OKD Template (OVA -> Template)
 
@@ -44,6 +45,12 @@ packer init .
 packer validate -var-file=auto.pkrvars.hcl .
 packer build -var-file=auto.pkrvars.hcl .
 ```
+
+Notes:
+
+- The RHEL unattended install fetches `http/ks.cfg` from the temporary Packer HTTP server.
+- The host running `packer build` must be reachable by the guest on TCP ports `8600-8610`.
+- If `firewalld` or another firewall blocks that range, the installer will fail with `failed to fetch kickstart` / `No route to host`.
 
 ## Enterprise Pattern (Reference)
 

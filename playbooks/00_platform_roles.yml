@@ -20,6 +20,13 @@
     - { role: lvm_create, when: (platform_roles.nfs_lvm_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs, storage] }
     - { role: nfs_conf, when: (platform_roles.nfs_conf_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs] }
 
+- name: Configure Ansible control host firewall (pre-vCenter)
+  hosts: ansible
+  become: true
+  tags: [platform, pre_vcenter, ansible, firewall]
+  roles:
+    - { role: firewall_conf, firewall_profile: ansible, tags: [platform, pre_vcenter, ansible, firewall] }
+
 
 - name: vCenter deployment and post-configuration roles
   hosts: localhost
