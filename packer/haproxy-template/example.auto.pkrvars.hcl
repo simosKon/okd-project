@@ -1,6 +1,5 @@
 vcenter_server   = "vcenter.example.local"
 vcenter_username = "administrator@vsphere.local"
-vcenter_password = "CHANGE_ME"
 
 datacenter = "LabDatacenter"
 cluster    = "OKD"
@@ -18,4 +17,3 @@ iso_datastore_path = "[NFS-OKD] ISO/rhel-9.4-x86_64-dvd.iso"
 
 # Must match rootpw in http/ks.cfg unless you customize ks.cfg
 ssh_username = "root"
-ssh_password = "ChangeMe123!"

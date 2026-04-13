@@ -140,6 +140,7 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml
 - Prerequisite: Terraform requires an existing VM template in vCenter (`template_name`) before provisioning can run
 - If you want template creation to be automated, use **Section 14 (Template Build Automation)**.
 - If you want the templates and later VMs to live inside the shared vSphere folder (for example `OKD`), run `terraform/foundation` before any Packer or Terraform workload stack.
+- To avoid password prompts, copy `terraform/vsphere-auth.env.example` to `terraform/vsphere-auth.env` and `packer/haproxy-template/packer-auth.env.example` to `packer/haproxy-template/packer-auth.env`, then run `source load-env.sh` before Terraform/Packer commands.
 
 ```bash
 cd terraform/foundation

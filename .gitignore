@@ -10,6 +10,8 @@ reports/*
 packer/**/auto.pkrvars.hcl
 packer/**/okd-template.env
 packer/**/iso-upload.env
+packer/**/packer-auth.env
+terraform/*.env
 
 terraform/**/*.tfstate
 terraform/**/*.tfvars
@@ -31,7 +33,7 @@ packer/haproxy-template/http/ks.cfg
 *.log
 *.tmp
 *.swp
-.env
+*.env
 
 packer/**/version.*
 
