@@ -1,5 +1,7 @@
 vault_ad_connect_user.yml
 vault_vcenter_deploy.yml
+vault_linux_sub_manager.yml
+vault*
 
 .vscode/*
 

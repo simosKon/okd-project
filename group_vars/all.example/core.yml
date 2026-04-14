@@ -57,6 +57,7 @@ ad_admin_password: ""
 
 # feature toggles
 platform_roles:
+  sub_manager_enabled: true
   ansible_user_enabled: true
   ntp_conf_enabled: true
   ad_join_enabled: false

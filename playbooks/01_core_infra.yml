@@ -17,6 +17,8 @@
   hosts: rhel
   become: true
   tags: [core_infra, baseline, platform]
+  vars_files:
+    - ../vault_linux_sub_manager.yml
   roles:
     - { role: sub_manager, when: platform_roles.sub_manager_enabled | bool, tags: [platform, pre_vcenter, sub_manager] }
     - { role: install_initial_packages, when: platform_roles.install_initial_packages_enabled | bool, tags: [platform, pre_vcenter, initial_packages] }
