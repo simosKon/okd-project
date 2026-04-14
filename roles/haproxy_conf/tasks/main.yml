@@ -63,6 +63,7 @@
   shell: |
     semanage port -l | grep -q ':6443' || semanage port -a -t http_port_t -p tcp 6443
     semanage port -l | grep -q ':22623' || semanage port -a -t http_port_t -p tcp 22623
+    semanage port -l | grep -q ':{{ haproxy.stats_port }}' || semanage port -a -t http_port_t -p tcp {{ haproxy.stats_port }}
   changed_when: false
 
 - name: Deploy haproxy.cfg
