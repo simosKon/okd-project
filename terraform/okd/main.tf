@@ -140,6 +140,15 @@ variable "bootstrap_memory_mb" {
   default = 16384
 }
 
+variable "bootstrap_disk_size_gb" {
+  type    = number
+  default = 60
+  validation {
+    condition     = var.bootstrap_disk_size_gb > 0
+    error_message = "bootstrap_disk_size_gb must be greater than 0."
+  }
+}
+
 variable "bootstrap_to_nodes_delay_seconds" {
   type        = number
   description = "Delay after bootstrap VM creation before creating masters/workers"
@@ -160,6 +169,15 @@ variable "master_memory_mb" {
   default = 16384
 }
 
+variable "master_disk_size_gb" {
+  type    = number
+  default = 120
+  validation {
+    condition     = var.master_disk_size_gb > 0
+    error_message = "master_disk_size_gb must be greater than 0."
+  }
+}
+
 variable "worker_cpu" {
   type    = number
   default = 4
@@ -168,6 +186,15 @@ variable "worker_cpu" {
 variable "worker_memory_mb" {
   type    = number
   default = 16384
+}
+
+variable "worker_disk_size_gb" {
+  type    = number
+  default = 120
+  validation {
+    condition     = var.worker_disk_size_gb > 0
+    error_message = "worker_disk_size_gb must be greater than 0."
+  }
 }
 
 variable "haproxy_enabled" {
@@ -281,6 +308,7 @@ resource "vsphere_virtual_machine" "bootstrap" {
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
   datastore_id     = data.vsphere_datastore.datastore.id
   folder           = local.vm_folder_enabled ? local.vm_folder_name : null
+  wait_for_guest_net_timeout = 0
 
   num_cpus = var.bootstrap_cpu
   memory   = var.bootstrap_memory_mb
@@ -300,7 +328,7 @@ resource "vsphere_virtual_machine" "bootstrap" {
 
   disk {
     label            = "disk0"
-    size             = data.vsphere_virtual_machine.template.disks[0].size
+    size             = var.bootstrap_disk_size_gb
     thin_provisioned = data.vsphere_virtual_machine.template.disks[0].thin_provisioned
   }
 
@@ -362,6 +390,7 @@ resource "vsphere_virtual_machine" "masters" {
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
   datastore_id     = data.vsphere_datastore.datastore.id
   folder           = local.vm_folder_enabled ? local.vm_folder_name : null
+  wait_for_guest_net_timeout = 0
 
   num_cpus = var.master_cpu
   memory   = var.master_memory_mb
@@ -381,7 +410,7 @@ resource "vsphere_virtual_machine" "masters" {
 
   disk {
     label            = "disk0"
-    size             = data.vsphere_virtual_machine.template.disks[0].size
+    size             = var.master_disk_size_gb
     thin_provisioned = data.vsphere_virtual_machine.template.disks[0].thin_provisioned
   }
 
@@ -402,6 +431,7 @@ resource "vsphere_virtual_machine" "workers" {
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
   datastore_id     = data.vsphere_datastore.datastore.id
   folder           = local.vm_folder_enabled ? local.vm_folder_name : null
+  wait_for_guest_net_timeout = 0
 
   num_cpus = var.worker_cpu
   memory   = var.worker_memory_mb
@@ -421,7 +451,7 @@ resource "vsphere_virtual_machine" "workers" {
 
   disk {
     label            = "disk0"
-    size             = data.vsphere_virtual_machine.template.disks[0].size
+    size             = var.worker_disk_size_gb
     thin_provisioned = data.vsphere_virtual_machine.template.disks[0].thin_provisioned
   }
 
