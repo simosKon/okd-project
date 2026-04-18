@@ -101,9 +101,9 @@
       shell: |
         set -euo pipefail
         all_ready=false
-        expected_nodes=({% for node in csr_expected_nodes %}"{{ node }}"{% if not loop.last %} {% endif %}{% endfor %})
+        expected_nodes="{{ csr_expected_nodes | join(' ') }}"
 
-        if [ "${#expected_nodes[@]}" -eq 0 ]; then
+        if [ -z "$expected_nodes" ]; then
           echo "No expected master/worker nodes found for CSR approval."
           exit 0
         fi
@@ -115,8 +115,8 @@
           fi
 
           all_ready=true
-          for node in "${expected_nodes[@]}"; do
-            approved_count="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr -o jsonpath='{range .items[*]}{.spec.username}{"|"}{range .status.conditions[*]}{.type}{","}{end}{"\n"}{end}' | awk -F'|' -v u="system:node:${node}" '$1==u && $2 ~ /Approved/ {count++} END{print count+0}')"
+          for node in $expected_nodes; do
+            approved_count="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk -v u="system:node:${node}" '$0 ~ u && $0 ~ /Approved/ {count++} END{print count+0}')"
             if [ "$approved_count" -lt "{{ csr_expected_approved_per_node }}" ]; then
               all_ready=false
               break
