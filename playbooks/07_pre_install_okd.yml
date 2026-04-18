@@ -3,10 +3,12 @@
   hosts: localhost
   gather_facts: true
   vars:
-    preokd_output_dir: "{{ playbook_dir }}/../reports"
+    preokd_repo_dir: "{{ playbook_dir | dirname }}"
+    preokd_output_dir: "{{ preokd_repo_dir }}/reports"
     preokd_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
     preokd_install_dir: "{{ okd.install_dir | default(ansible_env.HOME + '/okd-install') }}"
     preokd_tools_dir: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
+    preokd_terraform_dir: "{{ preokd_repo_dir }}/terraform/okd"
     preokd_require_ignition_files_mode: "{{ (preokd_require_ignition_files | default(false)) | bool }}"
     preokd_fail_on_critical_mode: "{{ (preokd_fail_on_critical | default(false)) | bool }}"
     preokd_require_haproxy_mode: "{{ (preokd_require_haproxy | default(true)) | bool }}"
@@ -46,7 +48,7 @@
         timeout: 3
       register: preokd_haproxy_ssh_check
       changed_when: false
-      failed_when: false
+      ignore_errors: true
       when:
         - preokd_require_haproxy_mode
         - infrastructure.haproxy_server is defined
@@ -60,7 +62,7 @@
         timeout: 3
       register: preokd_haproxy_ports_check
       changed_when: false
-      failed_when: false
+      ignore_errors: true
       loop: [6443, 22623, 80, 443]
       when:
         - preokd_require_haproxy_mode
@@ -98,7 +100,7 @@
         timeout: 3
       register: preokd_vip_port_checks
       changed_when: false
-      failed_when: false
+      ignore_errors: true
       loop:
         - { host: "{{ preokd_api_vip_ip }}", port: 6443 }
         - { host: "{{ preokd_api_vip_ip }}", port: 22623 }
@@ -160,13 +162,13 @@
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
-        - "{{ playbook_dir }}/../terraform/main.tf"
-        - "{{ playbook_dir }}/../terraform/terraform.tfvars"
+        - "{{ preokd_terraform_dir }}/main.tf"
+        - "{{ preokd_terraform_dir }}/terraform.tfvars"
       register: tf_files_stat
 
     - name: Read terraform.tfvars when present
       ansible.builtin.slurp:
-        path: "{{ playbook_dir }}/../terraform/terraform.tfvars"
+        path: "{{ preokd_terraform_dir }}/terraform.tfvars"
       register: tfvars_slurp
       when: tf_files_stat.results[1].stat.exists | default(false)
 
@@ -228,16 +230,16 @@
             + ([] if chk_masters_defined else ['Missing infrastructure.master list (need at least 3)'])
             + ([] if chk_workers_defined else ['Missing infrastructure.worker list (need at least 1)'])
             + ([] if (preokd_dns_failed | length == 0) else ['API/apps DNS names are not resolving from control host'])
-            + ([] if (not preokd_require_haproxy_mode) else ([] if (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed) else ['HAProxy host is not reachable on TCP/22']))
+            + ([] if (not preokd_require_haproxy_mode) else ([] if (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false))) else ['HAProxy host is not reachable on TCP/22']))
             + ([] if (not preokd_require_haproxy_mode) else ([] if ((preokd_haproxy_ports_failed | length) == 0) else ['HAProxy required ports are not reachable on HAProxy host IP: ' + (preokd_haproxy_ports_failed | join(', '))]))
             + ([] if (not preokd_require_node_dns_mode) else ([] if ((preokd_node_dns_failed | length) == 0) else ['Node DNS records missing for: ' + (preokd_node_dns_failed | join(', '))]))
             + ([] if (not preokd_require_vip_reachability_mode) else ([] if ((preokd_vip_ports_failed | length) == 0) else ['VIP port reachability failed for one or more api/apps endpoints']))
             + ([] if chk_openshift_install_present else ['openshift-install binary not found (/usr/local/bin or okd.tools_dir)'])
             + ([] if chk_oc_present else ['oc binary not found (/usr/local/bin or okd.tools_dir)'])
             + ([] if (openshift_install_version_check is not defined or openshift_install_version_check.rc == 0) else ['openshift-install exists but version command failed'])
-            + ([] if (tf_files_stat.results[0].stat.exists | default(false)) else ['terraform/main.tf is missing'])
-            + ([] if (tf_files_stat.results[1].stat.exists | default(false)) else ['terraform/terraform.tfvars is missing'])
-            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['terraform.tfvars missing template_name'])
+            + ([] if (tf_files_stat.results[0].stat.exists | default(false)) else ['terraform/okd/main.tf is missing'])
+            + ([] if (tf_files_stat.results[1].stat.exists | default(false)) else ['terraform/okd/terraform.tfvars is missing'])
+            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['terraform/okd/terraform.tfvars missing template_name'])
             + ([] if (not preokd_require_ignition_files_mode) else ([] if ((preokd_install_ignition_missing | length) == 0) else ['Required ignition files missing in okd.install_dir']))
             + ([] if (not preokd_require_ignition_files_mode) else ([] if ((preokd_tfvars_ignition_missing | length) == 0) else ['Ignition paths in terraform.tfvars do not exist']))
           }}
@@ -266,13 +268,13 @@
             + ([] if chk_bootstrap_defined else ['Set infrastructure.bootstrap.ip and infrastructure.bootstrap.hostname'])
             + ([] if chk_masters_defined else ['Set infrastructure.master with at least 3 control plane nodes'])
             + ([] if chk_workers_defined else ['Set infrastructure.worker with at least 1 worker node'])
-            + ([] if (not preokd_require_haproxy_mode or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed)) else ['Ensure HAProxy VM exists and is reachable on TCP/22'])
+            + ([] if (not preokd_require_haproxy_mode or (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false)))) else ['Ensure HAProxy VM exists and is reachable on TCP/22'])
             + ([] if (not preokd_require_haproxy_mode or ((preokd_haproxy_ports_failed | length) == 0)) else ['Ensure HAProxy listens on 6443, 22623, 80, 443'])
             + ([] if (not preokd_require_node_dns_mode or ((preokd_node_dns_failed | length) == 0)) else ['Create/fix DNS A records for bootstrap/master/worker nodes'])
             + ([] if (not preokd_require_vip_reachability_mode or ((preokd_vip_ports_failed | length) == 0)) else ['Ensure API/Ingress VIPs are routed and reachable on required ports'])
             + ([] if chk_openshift_install_present else ['Run playbooks/02_okd_upi_prepare.yml to install openshift-install'])
             + ([] if chk_oc_present else ['Run playbooks/02_okd_upi_prepare.yml to install oc'])
-            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['Set template_name in terraform/terraform.tfvars'])
+            + ([] if ((tfvars_template_name | default('') | length > 0) or not (tf_files_stat.results[1].stat.exists | default(false))) else ['Set template_name in terraform/okd/terraform.tfvars'])
             + (['All required OKD vars look OK for current stage.'] if (
                 chk_network_domain and
                 chk_network_dns_servers and
@@ -286,7 +288,7 @@
                 chk_masters_defined and
                 chk_workers_defined and
                 ((preokd_dns_failed | length) == 0) and
-                ((not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed)) and
+                ((not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false)))) and
                 ((not preokd_require_haproxy_mode) or ((preokd_haproxy_ports_failed | length) == 0)) and
                 ((not preokd_require_node_dns_mode) or ((preokd_node_dns_failed | length) == 0)) and
                 ((not preokd_require_vip_reachability_mode) or ((preokd_vip_ports_failed | length) == 0)) and
@@ -317,6 +319,7 @@
             require_node_dns: "{{ preokd_require_node_dns_mode }}"
             install_dir: "{{ preokd_install_dir }}"
             tools_dir: "{{ preokd_tools_dir }}"
+            terraform_dir: "{{ preokd_terraform_dir }}"
             tfvars_template_name: "{{ tfvars_template_name | default('') }}"
           execution_intent:
             - "OKD installation readiness validation"
@@ -328,7 +331,7 @@
           recommendations: "{{ preokd_recommendations }}"
           diagnostic_hints: "{{ preokd_diagnostic_hints }}"
           readiness_gates:
-            haproxy_reachable: "{{ (not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is not defined or preokd_haproxy_ssh_check.failed is not defined or not preokd_haproxy_ssh_check.failed) }}"
+            haproxy_reachable: "{{ (not preokd_require_haproxy_mode) or (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false))) }}"
             haproxy_ports_ready: "{{ (not preokd_require_haproxy_mode) or ((preokd_haproxy_ports_failed | length) == 0) }}"
             api_apps_dns_ready: "{{ (preokd_dns_failed | length) == 0 }}"
             node_dns_ready: "{{ (not preokd_require_node_dns_mode) or ((preokd_node_dns_failed | length) == 0) }}"
