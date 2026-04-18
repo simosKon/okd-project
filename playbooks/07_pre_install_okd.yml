@@ -202,14 +202,17 @@
         - (tfvars_master_ign | default('') | length > 0)
         - (tfvars_worker_ign | default('') | length > 0)
 
-    - name: Build OKD findings and guidance
+    - name: Build OKD derived findings
       ansible.builtin.set_fact:
         preokd_dns_failed: "{{ (api_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
         preokd_node_dns_failed: "{{ (preokd_node_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
         preokd_haproxy_ports_failed: "{{ (preokd_haproxy_ports_check.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
         preokd_vip_ports_failed: "{{ (preokd_vip_port_checks.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
-        preokd_install_ignition_missing: "{{ (okd_install_ignitions.results | default([])) | rejectattr('stat.exists') | map(attribute='stat.path') | list }}"
-        preokd_tfvars_ignition_missing: "{{ (tfvars_ignition_stats.results | default([])) | rejectattr('stat.exists') | map(attribute='stat.path') | list }}"
+        preokd_install_ignition_missing: "{{ (okd_install_ignitions.results | default([])) | selectattr('stat', 'defined') | rejectattr('stat.exists', 'equalto', true) | map(attribute='stat.path') | list }}"
+        preokd_tfvars_ignition_missing: "{{ (tfvars_ignition_stats.results | default([])) | selectattr('stat', 'defined') | rejectattr('stat.exists', 'equalto', true) | map(attribute='stat.path') | list }}"
+
+    - name: Build OKD findings and guidance
+      ansible.builtin.set_fact:
         preokd_critical_failures: >-
           {{
             []
