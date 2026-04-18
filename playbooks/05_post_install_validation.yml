@@ -111,10 +111,10 @@
 
     - name: Parse raw API outputs
       ansible.builtin.set_fact:
-        nodes_items: "{{ (nodes_raw.stdout | from_json).items | default([]) }}"
-        operators_items: "{{ (operators_raw.stdout | from_json).items | default([]) }}"
-        mcp_items: "{{ (mcp_raw.stdout | from_json).items | default([]) }}"
-        csr_items: "{{ (csr_raw.stdout | from_json).items | default([]) }}"
+        nodes_items: "{{ ((nodes_raw.stdout | from_json)['items']) | default([]) }}"
+        operators_items: "{{ ((operators_raw.stdout | from_json)['items']) | default([]) }}"
+        mcp_items: "{{ ((mcp_raw.stdout | from_json)['items']) | default([]) }}"
+        csr_items: "{{ ((csr_raw.stdout | from_json)['items']) | default([]) }}"
         clusterversion_obj: "{{ clusterversion_raw.stdout | from_json }}"
 
     - name: Initialize counters and lists
@@ -133,37 +133,43 @@
 
     - name: Summarize nodes readiness
       ansible.builtin.set_fact:
-        nodes_total: "{{ nodes_total + 1 }}"
-        nodes_ready: "{{ nodes_ready + (1 if node_ready_status == 'True' else 0) }}"
-        nodes_not_ready_list: "{{ nodes_not_ready_list + ([] if node_ready_status == 'True' else [item.metadata.name]) }}"
+        nodes_total: "{{ (nodes_total | int) + 1 }}"
+        nodes_ready: "{{ (nodes_ready | int) + (1 if node_ready_is_true else 0) }}"
+        nodes_not_ready_list: "{{ nodes_not_ready_list + ([] if node_ready_is_true else [item.metadata.name]) }}"
       vars:
         node_ready_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | list | first | default('Unknown')) }}"
+        node_ready_is_true: "{{ (node_ready_status | string | trim | lower) == 'true' }}"
       loop: "{{ nodes_items }}"
       loop_control:
         label: "{{ item.metadata.name }}"
 
     - name: Summarize cluster operators
       ansible.builtin.set_fact:
-        operators_total: "{{ operators_total + 1 }}"
-        operators_available_false_list: "{{ operators_available_false_list + ([] if op_available_status == 'True' else [item.metadata.name]) }}"
-        operators_degraded_true_list: "{{ operators_degraded_true_list + ([item.metadata.name] if op_degraded_status == 'True' else []) }}"
-        operators_progressing_true_list: "{{ operators_progressing_true_list + ([item.metadata.name] if op_progressing_status == 'True' else []) }}"
+        operators_total: "{{ (operators_total | int) + 1 }}"
+        operators_available_false_list: "{{ operators_available_false_list + ([] if op_available_is_true else [item.metadata.name]) }}"
+        operators_degraded_true_list: "{{ operators_degraded_true_list + ([item.metadata.name] if op_degraded_is_true else []) }}"
+        operators_progressing_true_list: "{{ operators_progressing_true_list + ([item.metadata.name] if op_progressing_is_true else []) }}"
       vars:
         op_available_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Available') | map(attribute='status') | list | first | default('Unknown')) }}"
         op_degraded_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | list | first | default('Unknown')) }}"
         op_progressing_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | list | first | default('Unknown')) }}"
+        op_available_is_true: "{{ (op_available_status | string | trim | lower) == 'true' }}"
+        op_degraded_is_true: "{{ (op_degraded_status | string | trim | lower) == 'true' }}"
+        op_progressing_is_true: "{{ (op_progressing_status | string | trim | lower) == 'true' }}"
       loop: "{{ operators_items }}"
       loop_control:
         label: "{{ item.metadata.name }}"
 
     - name: Summarize machine config pools
       ansible.builtin.set_fact:
-        mcp_total: "{{ mcp_total + 1 }}"
-        mcp_updating_true_list: "{{ mcp_updating_true_list + ([item.metadata.name] if mcp_updating_status == 'True' else []) }}"
-        mcp_degraded_true_list: "{{ mcp_degraded_true_list + ([item.metadata.name] if mcp_degraded_status == 'True' else []) }}"
+        mcp_total: "{{ (mcp_total | int) + 1 }}"
+        mcp_updating_true_list: "{{ mcp_updating_true_list + ([item.metadata.name] if mcp_updating_is_true else []) }}"
+        mcp_degraded_true_list: "{{ mcp_degraded_true_list + ([item.metadata.name] if mcp_degraded_is_true else []) }}"
       vars:
         mcp_updating_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Updating') | map(attribute='status') | list | first | default('Unknown')) }}"
         mcp_degraded_status: "{{ (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | list | first | default('Unknown')) }}"
+        mcp_updating_is_true: "{{ (mcp_updating_status | string | trim | lower) == 'true' }}"
+        mcp_degraded_is_true: "{{ (mcp_degraded_status | string | trim | lower) == 'true' }}"
       loop: "{{ mcp_items }}"
       loop_control:
         label: "{{ item.metadata.name }}"
