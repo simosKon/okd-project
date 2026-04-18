@@ -128,13 +128,13 @@ locals {
   haproxy_userdata = yamlencode({
     disable_root = false
     ssh_pwauth   = true
-    users = local.root_ssh_public_key_trimmed != "" ? [
-      "default",
-      {
+    users = concat(
+      ["default"],
+      local.root_ssh_public_key_trimmed != "" ? [{
         name                = "root"
         ssh_authorized_keys = [local.root_ssh_public_key_trimmed]
-      }
-    ] : ["default"]
+      }] : []
+    )
   })
   haproxy_guestinfo_config = {
     "guestinfo.metadata"          = base64encode(local.haproxy_metadata)
