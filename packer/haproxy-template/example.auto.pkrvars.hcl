@@ -17,3 +17,4 @@ iso_datastore_path = "[NFS-OKD] ISO/rhel-9.4-x86_64-dvd.iso"
 
 # Must match rootpw in http/ks.cfg unless you customize ks.cfg
 ssh_username = "root"
+ansible_root_ssh_public_key = "ssh-ed25519 AAAA... root@ansible"

@@ -66,3 +66,9 @@ variable "ssh_password" {
   type      = string
   sensitive = true
 }
+
+variable "ansible_root_ssh_public_key" {
+  type        = string
+  default     = ""
+  description = "Optional SSH public key to add to /root/.ssh/authorized_keys in the HAProxy template."
+}

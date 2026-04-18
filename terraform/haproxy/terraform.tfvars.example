@@ -16,7 +16,6 @@ haproxy_name        = "haproxy"
 haproxy_mac_address = "00:50:56:ad:10:15"
 haproxy_cpu         = 2
 haproxy_memory_mb   = 4096
-root_ssh_public_key = "ssh-ed25519 AAAA... root@ansible"
 
 # optional
 vm_folder = "OKD"

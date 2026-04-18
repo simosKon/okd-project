@@ -65,7 +65,11 @@ build {
   sources = ["source.vsphere-iso.rhel94_haproxy"]
 
   provisioner "shell" {
+    environment_vars = [
+      "ANSIBLE_ROOT_SSH_PUBLIC_KEY=${var.ansible_root_ssh_public_key}"
+    ]
     inline = [
+      "if [ -n \"$ANSIBLE_ROOT_SSH_PUBLIC_KEY\" ]; then mkdir -p /root/.ssh && chmod 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && grep -qxF \"$ANSIBLE_ROOT_SSH_PUBLIC_KEY\" /root/.ssh/authorized_keys || echo \"$ANSIBLE_ROOT_SSH_PUBLIC_KEY\" >> /root/.ssh/authorized_keys; fi",
       "systemctl enable vmtoolsd qemu-guest-agent sshd",
       "cloud-init clean --logs || true",
       "dnf clean all || true",
