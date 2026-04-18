@@ -67,6 +67,12 @@ variable "guest_domain" {
   description = "Guest OS DNS domain used during vSphere clone customization."
 }
 
+variable "root_ssh_public_key" {
+  type        = string
+  default     = ""
+  description = "Optional SSH public key injected into root authorized_keys via cloud-init guestinfo."
+}
+
 variable "haproxy_mac_address" {
   type        = string
   description = "Static MAC for HAProxy VM"
@@ -114,6 +120,28 @@ data "vsphere_virtual_machine" "template" {
 locals {
   vm_folder_name    = trimspace(var.vm_folder)
   vm_folder_enabled = local.vm_folder_name != ""
+  root_ssh_public_key_trimmed = trimspace(var.root_ssh_public_key)
+  haproxy_metadata = yamlencode({
+    instance_id    = var.haproxy_name
+    local_hostname = "${var.haproxy_name}.${var.guest_domain}"
+  })
+  haproxy_userdata = yamlencode({
+    disable_root = false
+    ssh_pwauth   = true
+    users = local.root_ssh_public_key_trimmed != "" ? [
+      "default",
+      {
+        name                = "root"
+        ssh_authorized_keys = [local.root_ssh_public_key_trimmed]
+      }
+    ] : ["default"]
+  })
+  haproxy_guestinfo_config = {
+    "guestinfo.metadata"          = base64encode(local.haproxy_metadata)
+    "guestinfo.metadata.encoding" = "base64"
+    "guestinfo.userdata"          = base64encode(local.haproxy_userdata)
+    "guestinfo.userdata.encoding" = "base64"
+  }
 }
 
 resource "vsphere_virtual_machine" "haproxy" {
@@ -157,10 +185,10 @@ resource "vsphere_virtual_machine" "haproxy" {
     }
   }
 
-  extra_config = {
+  extra_config = merge({
     "disk.EnableUUID"   = "TRUE"
     "stealclock.enable" = "TRUE"
-  }
+  }, local.haproxy_guestinfo_config)
 }
 
 output "haproxy_vm_name" {
