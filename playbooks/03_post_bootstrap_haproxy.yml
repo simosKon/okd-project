@@ -34,8 +34,9 @@
     csr_auto_approve_enabled: true
     csr_approve_retries: 30
     csr_approve_interval_seconds: 10
-    okd_install_dir_path: "{{ okd.install_dir | default(ansible_env.HOME + '/okd-install') }}"
-    okd_tools_dir_path: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
+    localhost_home_dir: "{{ lookup('ansible.builtin.env', 'HOME') | default('/root', true) }}"
+    okd_install_dir_path: "{{ okd.install_dir | default(localhost_home_dir + '/okd-install') }}"
+    okd_tools_dir_path: "{{ okd.tools_dir | default(localhost_home_dir + '/okd-tools') }}"
     kubeconfig_path: "{{ okd_install_dir_path }}/auth/kubeconfig"
     oc_bin: "{{ okd_tools_dir_path }}/oc"
   tasks:
