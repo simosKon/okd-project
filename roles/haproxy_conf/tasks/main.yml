@@ -69,11 +69,17 @@
   command: ip -o -4 addr show dev "{{ haproxy_iface }}"
   register: haproxy_iface_ipv4
   changed_when: false
+  retries: 5
+  delay: 2
+  until:
+    - haproxy_iface_ipv4.rc == 0
+    - api_vip_cidr in (haproxy_iface_ipv4.stdout | default(''))
+    - ingress_vip_cidr in (haproxy_iface_ipv4.stdout | default(''))
 
 - name: Build post-activation IPv4 facts
   set_fact:
     configured_ipv4_addresses_after: "{{ (nmcli_ipv4_addresses_after.stdout | trim | default('')) | split(',') | map('trim') | reject('equalto', '') | list }}"
-    live_ipv4_addresses: "{{ haproxy_iface_ipv4.stdout_lines | map('regex_search', 'inet\\s+([0-9.]+/[0-9]+)', '\\1') | select('string') | list }}"
+    live_ipv4_addresses: "{{ haproxy_iface_ipv4.stdout | regex_findall('inet\\s+([0-9.]+/[0-9]+)') }}"
 
 - name: Ensure HAProxy VIPs are configured and live on the selected interface
   assert:
@@ -86,6 +92,7 @@
       HAProxy VIPs were not applied successfully on connection {{ haproxy_conn }}
       (interface {{ haproxy_iface }}). Configured addresses: {{ configured_ipv4_addresses_after | join(', ') | default('none', true) }}.
       Live interface addresses: {{ live_ipv4_addresses | join(', ') | default('none', true) }}.
+      Raw ip output: {{ haproxy_iface_ipv4.stdout | default('none') | trim }}.
     success_msg: >-
       HAProxy VIPs are configured on connection {{ haproxy_conn }} and present on interface {{ haproxy_iface }}.
 
