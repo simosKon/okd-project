@@ -36,6 +36,7 @@
 - name: Set connection name
   set_fact:
     haproxy_conn: "{{ haproxy_conn_line.split(':')[0] }}"
+    haproxy_iface: "{{ haproxy_conn_line.split(':')[1] }}"
 
 - name: Get currently configured IPv4 addresses for connection
   command: nmcli -g ipv4.addresses connection show "{{ haproxy_conn }}"
@@ -58,6 +59,35 @@
 
 - name: Bring connection up
   command: nmcli connection up "{{ haproxy_conn }}"
+
+- name: Get currently configured IPv4 addresses after connection activation
+  command: nmcli -g ipv4.addresses connection show "{{ haproxy_conn }}"
+  register: nmcli_ipv4_addresses_after
+  changed_when: false
+
+- name: Get live IPv4 addresses on HAProxy interface
+  command: ip -o -4 addr show dev "{{ haproxy_iface }}"
+  register: haproxy_iface_ipv4
+  changed_when: false
+
+- name: Build post-activation IPv4 facts
+  set_fact:
+    configured_ipv4_addresses_after: "{{ (nmcli_ipv4_addresses_after.stdout | trim | default('')) | split(',') | map('trim') | reject('equalto', '') | list }}"
+    live_ipv4_addresses: "{{ haproxy_iface_ipv4.stdout_lines | map('regex_search', 'inet\\s+([0-9.]+/[0-9]+)', '\\1') | select('string') | list }}"
+
+- name: Ensure HAProxy VIPs are configured and live on the selected interface
+  assert:
+    that:
+      - api_vip_cidr in configured_ipv4_addresses_after
+      - ingress_vip_cidr in configured_ipv4_addresses_after
+      - api_vip_cidr in live_ipv4_addresses
+      - ingress_vip_cidr in live_ipv4_addresses
+    fail_msg: >-
+      HAProxy VIPs were not applied successfully on connection {{ haproxy_conn }}
+      (interface {{ haproxy_iface }}). Configured addresses: {{ configured_ipv4_addresses_after | join(', ') | default('none', true) }}.
+      Live interface addresses: {{ live_ipv4_addresses | join(', ') | default('none', true) }}.
+    success_msg: >-
+      HAProxy VIPs are configured on connection {{ haproxy_conn }} and present on interface {{ haproxy_iface }}.
 
 - name: Configure SELinux ports
   shell: |
