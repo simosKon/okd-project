@@ -55,21 +55,6 @@
         - infrastructure.haproxy_server.ip is defined
         - infrastructure.haproxy_server.ip | length > 0
 
-    - name: Check HAProxy service ports on HAProxy host IP
-      ansible.builtin.wait_for:
-        host: "{{ infrastructure.haproxy_server.ip }}"
-        port: "{{ item }}"
-        timeout: 3
-      register: preokd_haproxy_ports_check
-      changed_when: false
-      ignore_errors: true
-      loop: [6443, 22623, 80, 443]
-      when:
-        - preokd_require_haproxy_mode
-        - infrastructure.haproxy_server is defined
-        - infrastructure.haproxy_server.ip is defined
-        - infrastructure.haproxy_server.ip | length > 0
-
     - name: Build expected OKD node DNS hostnames list
       ansible.builtin.set_fact:
         preokd_required_node_dns_hosts: >-
@@ -208,7 +193,7 @@
       ansible.builtin.set_fact:
         preokd_dns_failed: "{{ (api_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
         preokd_node_dns_failed: "{{ (preokd_node_dns_checks.results | default([])) | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
-        preokd_haproxy_ports_failed: "{{ (preokd_haproxy_ports_check.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
+        preokd_haproxy_ports_failed: "{{ (preokd_vip_port_checks.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | map('to_json') | list }}"
         preokd_vip_ports_failed: "{{ (preokd_vip_port_checks.results | default([])) | rejectattr('failed', 'undefined') | selectattr('failed') | map(attribute='item') | list }}"
         preokd_install_ignition_missing: "{{ (okd_install_ignitions.results | default([])) | selectattr('stat', 'defined') | rejectattr('stat.exists', 'equalto', true) | map(attribute='stat.path') | list }}"
         preokd_tfvars_ignition_missing: "{{ (tfvars_ignition_stats.results | default([])) | selectattr('stat', 'defined') | rejectattr('stat.exists', 'equalto', true) | map(attribute='stat.path') | list }}"
@@ -231,7 +216,7 @@
             + ([] if chk_workers_defined else ['Missing infrastructure.worker list (need at least 1)'])
             + ([] if (preokd_dns_failed | length == 0) else ['API/apps DNS names are not resolving from control host'])
             + ([] if (not preokd_require_haproxy_mode) else ([] if (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false))) else ['HAProxy host is not reachable on TCP/22']))
-            + ([] if (not preokd_require_haproxy_mode) else ([] if ((preokd_haproxy_ports_failed | length) == 0) else ['HAProxy required ports are not reachable on HAProxy host IP: ' + (preokd_haproxy_ports_failed | join(', '))]))
+            + ([] if (not preokd_require_haproxy_mode) else ([] if ((preokd_haproxy_ports_failed | length) == 0) else ['HAProxy listeners are not reachable on one or more OKD VIPs']))
             + ([] if (not preokd_require_node_dns_mode) else ([] if ((preokd_node_dns_failed | length) == 0) else ['Node DNS records missing for: ' + (preokd_node_dns_failed | join(', '))]))
             + ([] if (not preokd_require_vip_reachability_mode) else ([] if ((preokd_vip_ports_failed | length) == 0) else ['VIP port reachability failed for one or more api/apps endpoints']))
             + ([] if chk_openshift_install_present else ['openshift-install binary not found (/usr/local/bin or okd.tools_dir)'])
@@ -269,7 +254,7 @@
             + ([] if chk_masters_defined else ['Set infrastructure.master with at least 3 control plane nodes'])
             + ([] if chk_workers_defined else ['Set infrastructure.worker with at least 1 worker node'])
             + ([] if (not preokd_require_haproxy_mode or (preokd_haproxy_ssh_check is defined and not (preokd_haproxy_ssh_check.failed | default(false)))) else ['Ensure HAProxy VM exists and is reachable on TCP/22'])
-            + ([] if (not preokd_require_haproxy_mode or ((preokd_haproxy_ports_failed | length) == 0)) else ['Ensure HAProxy listens on 6443, 22623, 80, 443'])
+            + ([] if (not preokd_require_haproxy_mode or ((preokd_haproxy_ports_failed | length) == 0)) else ['Ensure HAProxy listeners are bound and reachable on the API and Ingress VIPs'])
             + ([] if (not preokd_require_node_dns_mode or ((preokd_node_dns_failed | length) == 0)) else ['Create/fix DNS A records for bootstrap/master/worker nodes'])
             + ([] if (not preokd_require_vip_reachability_mode or ((preokd_vip_ports_failed | length) == 0)) else ['Ensure API/Ingress VIPs are routed and reachable on required ports'])
             + ([] if chk_openshift_install_present else ['Run playbooks/02_okd_upi_prepare.yml to install openshift-install'])
@@ -427,7 +412,7 @@
           ## Details
           - DNS not resolving: {{ (preokd_report.details.dns_not_resolving | join(', ')) if (preokd_report.details.dns_not_resolving | length > 0) else 'none' }}
           - Node DNS not resolving: {{ (preokd_report.details.node_dns_not_resolving | join(', ')) if (preokd_report.details.node_dns_not_resolving | length > 0) else 'none' }}
-          - HAProxy ports failed: {{ (preokd_report.details.haproxy_ports_failed | join(', ')) if (preokd_report.details.haproxy_ports_failed | length > 0) else 'none' }}
+          - HAProxy VIP listeners failed: {{ (preokd_report.details.haproxy_ports_failed | join(', ')) if (preokd_report.details.haproxy_ports_failed | length > 0) else 'none' }}
           - VIP ports failed: {{ (preokd_report.details.vip_ports_failed | to_json) if (preokd_report.details.vip_ports_failed | length > 0) else 'none' }}
           - Missing ignitions in install dir: {{ (preokd_report.details.install_dir_missing_ignitions | join(', ')) if (preokd_report.details.install_dir_missing_ignitions | length > 0) else 'none' }}
           - Missing ignitions from tfvars paths: {{ (preokd_report.details.tfvars_missing_ignitions | join(', ')) if (preokd_report.details.tfvars_missing_ignitions | length > 0) else 'none' }}
