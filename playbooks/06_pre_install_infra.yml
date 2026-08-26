@@ -56,9 +56,7 @@
 
     - name: Inventory group checks
       ansible.builtin.set_fact:
-        chk_dns_group_ok: "{{ (groups['dns'] is defined) and ((groups['dns'] | length) > 0) }}"
         chk_haproxy_group_ok: "{{ (groups['haproxy'] is defined) and ((groups['haproxy'] | length) > 0) }}"
-        chk_nfs_group_ok: "{{ (groups['nfs'] is defined) and ((groups['nfs'] | length) > 0) }}"
 
     - name: Variable presence checks
       ansible.builtin.set_fact:
@@ -86,16 +84,6 @@
         chk_vcenter_deploy_storage_type_supported: "{{ preinfra_vcenter_deploy_storage_type in ['local_esxi', 'nfs_pre_mounted'] }}"
         chk_vcenter_nfs_storage_consistent: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or (preinfra_vcenter_deploy_storage_type != 'nfs_pre_mounted') or (preinfra_storage_backend == 'nfs') }}"
 
-    - name: Check DNS host SSH reachability
-      ansible.builtin.wait_for:
-        host: "{{ infrastructure.dns_server.ip }}"
-        port: 22
-        timeout: 3
-      register: dns_ssh_check
-      changed_when: false
-      ignore_errors: true
-      when: chk_dns_ip_defined
-
     - name: Check DNS service reachability (TCP/53)
       ansible.builtin.wait_for:
         host: "{{ infrastructure.dns_server.ip }}"
@@ -115,18 +103,6 @@
       changed_when: false
       ignore_errors: true
       when: chk_haproxy_ip_defined
-
-    - name: Check NFS host SSH reachability
-      ansible.builtin.wait_for:
-        host: "{{ infrastructure.nfs_server.ip }}"
-        port: 22
-        timeout: 3
-      register: nfs_ssh_check
-      changed_when: false
-      ignore_errors: true
-      when:
-        - preinfra_require_nfs_mode
-        - chk_nfs_ip_defined
 
     - name: Check Ansible host SSH reachability
       ansible.builtin.wait_for:
@@ -298,7 +274,6 @@
             + ([] if chk_network_gateway_defined else ['Missing var network.gateway'])
             + ([] if chk_network_domain_defined else ['Missing var network.domain'])
             + ([] if chk_network_dns_server_defined else ['Missing var network.dns_servers[0]'])
-            + ([] if chk_dns_group_ok else ['Missing inventory group: dns'])
             + ([] if chk_haproxy_group_ok else ['Missing inventory group: haproxy'])
             + ([] if chk_dns_ip_defined else ['Missing var infrastructure.dns_server.ip'])
             + ([] if chk_ansible_ip_defined else ['Missing var infrastructure.ansible_server.ip'])
@@ -335,10 +310,7 @@
           {{
             []
             + ([] if (not preinfra_any_vcenter_role_enabled) else ([] if (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0) else ['pyVmomi is not installed for the Python interpreter on the remote Ansible host']))
-            + ([] if (dns_ssh_check is not defined or dns_ssh_check.failed is not defined or not dns_ssh_check.failed) else ['DNS host SSH (TCP/22) is unreachable. This is informational unless your DNS role requires SSH access.'])
             + ([] if (haproxy_ssh_check is not defined or haproxy_ssh_check.failed is not defined or not haproxy_ssh_check.failed) else ['HAProxy host SSH (TCP/22) is unreachable. This is expected before Terraform provisioning; it is required before OKD install.'])
-            + ([] if (not preinfra_require_nfs_mode) else ([] if (nfs_ssh_check is not defined or nfs_ssh_check.failed is not defined or not nfs_ssh_check.failed) else ['NFS host SSH (TCP/22) is unreachable. NFS readiness is based on TCP/2049.']))
-            + (['NFS inventory group is missing. This is acceptable when NFS is external, but nfs host-level roles in playbooks/00_platform_roles.yml and playbooks/01_core_infra.yml will be skipped/fail if targeted.'] if (preinfra_require_nfs_mode and not chk_nfs_group_ok) else [])
             + (['vcenter_deploy is enabled: vCenter TCP/443 reachability is not required before first deploy.'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and (vcenter_443_check is defined and vcenter_443_check.failed is defined and vcenter_443_check.failed)) else [])
             + (['Existing vCenter detected on TCP/443 while vcenter_deploy is enabled. Skip deploy and run only vCenter configure roles.'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and (preinfra_vcenter_detected_existing | default(false))) else [])
             + (['vCenter deploy target storage: local_esxi (recommended for first bootstrap unless you pre-mounted NFS manually).'] if ((platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'local_esxi') else [])
@@ -363,7 +335,6 @@
             + ([] if chk_dns_hostname_defined else ['Set infrastructure.dns_server.hostname'])
             + ([] if chk_ansible_hostname_defined else ['Set infrastructure.ansible_server.hostname'])
             + ([] if chk_nfs_hostname_defined else ['Set infrastructure.nfs_server.hostname (for NFS backend)'])
-            + ([] if (preinfra_storage_backend != 'nfs' or chk_nfs_group_ok) else ['Optional: add inventory group [nfs] if you want to run nfs host roles from this repo'])
             + ([] if (ansible_ssh_check is not defined or ansible_ssh_check.failed is not defined or not ansible_ssh_check.failed) else ['Ensure ansible_server is reachable on TCP/22 from control host'])
             + ([] if (not preinfra_require_dns_records_mode or ((preinfra_dns_missing_hosts | default([]) | length) == 0)) else ['Create/fix DNS records for: ' + ((preinfra_dns_missing_hosts | default([])) | join(', '))])
             + ([] if (not preinfra_require_esxi_mode or (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0))) else ['Ensure all ESXi hosts are reachable on TCP/443 and listed correctly in infrastructure.esxi'])
@@ -426,8 +397,8 @@
         preinfra_execution_intent: >-
           {{
             []
-            + ['Infrastructure preparation: DNS configuration'] 
-            + (['Infrastructure preparation: NFS configuration'] if preinfra_require_nfs_mode else ['Infrastructure preparation: NFS configuration skipped'])
+            + ['External DNS service validation (TCP/53 and required records)']
+            + (['External Synology NFS validation (TCP/2049)'] if preinfra_require_nfs_mode else ['NFS validation skipped'])
             + (['Infrastructure preparation: ESXi validation'] if preinfra_require_esxi_mode else ['Infrastructure preparation: ESXi validation skipped'])
             + (
                 ['Infrastructure preparation: Existing vCenter detected; skip vcenter_deploy and run vCenter configure roles only (00_platform_roles.yml)']
@@ -479,9 +450,7 @@
             network_gateway_defined: "{{ chk_network_gateway_defined }}"
             network_domain_defined: "{{ chk_network_domain_defined }}"
             network_dns_server_defined: "{{ chk_network_dns_server_defined }}"
-            dns_group_ok: "{{ chk_dns_group_ok }}"
             haproxy_group_ok: "{{ chk_haproxy_group_ok }}"
-            nfs_group_ok: "{{ chk_nfs_group_ok }}"
             dns_ip_defined: "{{ chk_dns_ip_defined }}"
             ansible_ip_defined: "{{ chk_ansible_ip_defined }}"
             haproxy_ip_defined: "{{ chk_haproxy_ip_defined }}"
@@ -492,10 +461,8 @@
             vcenter_ip_defined: "{{ chk_vcenter_ip_defined }}"
             vcenter_existing_detected: "{{ preinfra_vcenter_detected_existing | default(false) }}"
             dns_service_53_reachable: "{{ (dns_53_check is not defined) or (dns_53_check.failed is not defined) or (not dns_53_check.failed) }}"
-            dns_ssh_reachable: "{{ (dns_ssh_check is not defined) or (dns_ssh_check.failed is not defined) or (not dns_ssh_check.failed) }}"
             ansible_ssh_reachable: "{{ (ansible_ssh_check is not defined) or (ansible_ssh_check.failed is not defined) or (not ansible_ssh_check.failed) }}"
             haproxy_ssh_reachable: "{{ (haproxy_ssh_check is not defined) or (haproxy_ssh_check.failed is not defined) or (not haproxy_ssh_check.failed) }}"
-            nfs_ssh_reachable: "{{ (not preinfra_require_nfs_mode) or ((nfs_ssh_check is not defined) or (nfs_ssh_check.failed is not defined) or (not nfs_ssh_check.failed)) }}"
             nfs_2049_reachable: "{{ (not preinfra_require_nfs_mode) or ((nfs_2049_check is not defined) or (nfs_2049_check.failed is not defined) or (not nfs_2049_check.failed)) }}"
             required_dns_records_resolve: "{{ (not preinfra_require_dns_records_mode) or ((preinfra_dns_missing_hosts | default([]) | length) == 0) }}"
             esxi_443_reachable: "{{ (not preinfra_require_esxi_mode) or (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0)) }}"

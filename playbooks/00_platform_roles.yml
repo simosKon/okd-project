@@ -1,25 +1,4 @@
 ---
-- name: Configure DNS
-  hosts: dns
-  become: true
-  tags: [platform, pre_vcenter, dns]
-  roles:
-    - { role: sub_manager, when: (platform_roles.sub_manager_enabled | default(false)) | bool, tags: [platform, pre_vcenter, sub_manager] }
-    - { role: install_initial_packages, when: (platform_roles.install_initial_packages_enabled | default(false)) | bool, tags: [platform, pre_vcenter, initial_packages] }
-    - { role: firewall_conf, firewall_profile: dns, tags: [platform, pre_vcenter, dns, firewall] }
-    - { role: dns_conf, tags: [platform, pre_vcenter, dns] }
-
-- name: Configure NFS (pre-vCenter)
-  hosts: nfs
-  become: true
-  tags: [platform, pre_vcenter, nfs]
-  roles:
-    - { role: sub_manager, when: (platform_roles.sub_manager_enabled | default(false)) | bool, tags: [platform, pre_vcenter, sub_manager] }
-    - { role: install_initial_packages, when: (platform_roles.install_initial_packages_enabled | default(false)) | bool, tags: [platform, pre_vcenter, initial_packages] }
-    - { role: firewall_conf, firewall_profile: nfs, tags: [platform, pre_vcenter, nfs, firewall] }
-    - { role: lvm_create, when: (platform_roles.nfs_lvm_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs, storage] }
-    - { role: nfs_conf, when: (platform_roles.nfs_conf_enabled | default(false)) | bool, tags: [platform, pre_vcenter, nfs] }
-
 - name: Configure Ansible control host firewall (pre-vCenter)
   hosts: ansible
   become: true

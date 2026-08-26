@@ -217,9 +217,11 @@ Important:
 
 Run commands from a control host that:
 - has Ansible installed
-- can SSH to target hosts (`dns`, `nfs`, and others used by your flow)
+- can SSH to the managed Linux hosts (`ansible`, `haproxy`, and others used by your flow)
 - has network access to ESXi/vCenter endpoints used by enabled roles
 - has `community.vmware` collection installed when vCenter roles are enabled
+
+DNS and NFS are external services in the current lab topology. DNS runs in a container and NFS is provided by the Synology NAS, so neither service is an SSH-managed inventory host. Pre-install validation checks DNS on TCP/53 and NFS on TCP/2049.
 
 When AWX targets the persistent `ansible` host, that host must provide the runtime tools used by remote tasks:
 - `pyVmomi 8.0.3.0.1` for VMware modules
@@ -263,12 +265,6 @@ The tracked `inventory.ini` is the canonical inventory used by CLI and the AWX p
 
 ```ini
 
-[dns]
-dns01 ansible_host=dns.example.local ansible_user=ansible_admin
-
-[nfs]
-nfs01 ansible_host=nfs.example.local ansible_user=ansible_admin
-
 [ansible]
 ansible01 ansible_host=ansible.example.local ansible_user=ansible_admin
 
@@ -279,9 +275,8 @@ haproxy01 ansible_host=haproxy.example.local ansible_user=ansible_admin
 vcenter01 ansible_host=vcenter.example.local ansible_user=root
 
 [infra:children]
-dns
 haproxy
-nfs
+ansible
 
 [rhel:children]
 dns

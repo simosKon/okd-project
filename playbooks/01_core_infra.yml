@@ -1,14 +1,4 @@
 ---
-- name: Configure DNS
-  hosts: dns
-  become: true
-  tags: [core_infra, dns]
-  roles:
-    - { role: sub_manager, when: platform_roles.sub_manager_enabled | bool, tags: [platform, pre_vcenter, sub_manager] }
-    - { role: install_initial_packages, when: platform_roles.install_initial_packages_enabled | bool, tags: [platform, pre_vcenter, initial_packages] }
-    - { role: firewall_conf, firewall_profile: dns, tags: [core_infra, dns, firewall] }
-    - { role: dns_conf, tags: [core_infra, dns] }
-
 - name: Baseline Linux platform roles
   hosts: rhel
   become: true
@@ -34,12 +24,3 @@
   roles:
     - { role: firewall_conf, firewall_profile: haproxy, tags: [core_infra, haproxy, firewall] }
     - { role: haproxy_conf, tags: [core_infra, haproxy] }
-
-- name: Configure NFS storage server (optional)
-  hosts: nfs
-  become: true
-  tags: [core_infra, nfs]
-  roles:
-    - { role: firewall_conf, firewall_profile: nfs, tags: [core_infra, nfs, firewall] }
-    - { role: lvm_create, when: (platform_roles.nfs_lvm_enabled | default(false)) | bool, tags: [core_infra, nfs, lvm] }
-    - { role: nfs_conf, when: (platform_roles.nfs_conf_enabled | default(false)) | bool, tags: [core_infra, nfs] }
