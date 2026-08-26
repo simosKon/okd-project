@@ -6,10 +6,9 @@ vault*
 .vscode/*
 
 terraform/*.auto.tfvars
-group_vars/all.yml
-group_vars/all/*.yml
 reports/*
 packer/**/auto.pkrvars.hcl
+!packer/haproxy-template/auto.pkrvars.hcl
 packer/**/okd-template.env
 packer/**/iso-upload.env
 packer/**/packer-auth.env
@@ -17,6 +16,9 @@ terraform/*.env
 
 terraform/**/*.tfstate
 terraform/**/*.tfvars
+!terraform/foundation/terraform.tfvars
+!terraform/haproxy/terraform.tfvars
+!terraform/okd/terraform.tfvars
 terraform/**/*.tfstate.backup
 terraform/**/.terraform/*
 

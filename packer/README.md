@@ -16,8 +16,6 @@ This directory automates creation of:
 
 ```bash
 cd terraform/foundation
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars
 terraform init
 terraform apply
 ```
@@ -28,13 +26,12 @@ Use the govc script:
 
 ```bash
 cd packer/okd-template
-cp okd-template.env.example okd-template.env
-# edit okd-template.env
-source okd-template.env
+# AWX injects GOVC_USERNAME/GOVC_PASSWORD. Supply the remaining required
+# non-secret variables through the Job Template environment.
 bash build_ova_template.sh
 ```
 
-If `VM_FOLDER` is set in `okd-template.env`, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder.
+If `VM_FOLDER` is set, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder.
 
 ## 2) HAProxy Template (ISO -> VM -> Template)
 
@@ -42,25 +39,22 @@ First upload ISO to datastore:
 
 ```bash
 cd packer/haproxy-template
-cp iso-upload.env.example iso-upload.env
-# edit iso-upload.env
-source iso-upload.env
+# AWX injects GOVC credentials. Supply ISO_LOCAL_PATH, ISO_DATASTORE,
+# ISO_DATASTORE_PATH, GOVC_URL, GOVC_INSECURE, and GOVC_DATACENTER.
 bash upload_iso.sh
 ```
 
 Then build with Packer:
 
 ```bash
-cp example.auto.pkrvars.hcl auto.pkrvars.hcl
-# edit auto.pkrvars.hcl
-packer init .
-packer validate -var-file=auto.pkrvars.hcl .
-packer build -var-file=auto.pkrvars.hcl .
+# Edit the tracked, non-secret auto.pkrvars.hcl as needed. AWX injects
+# PKR_VAR_vcenter_username, PKR_VAR_vcenter_password, and PKR_VAR_ssh_password.
+bash build.sh
 ```
 
 Notes:
 
-- The RHEL unattended install fetches `http/ks.cfg` from the temporary Packer HTTP server.
+- `build.sh` renders `http/ks.cfg` from `http/ks.cfg.tmpl` using a one-way hash of the Vault-injected SSH password and removes it when the build exits.
 - The host running `packer build` must be reachable by the guest on TCP ports `8600-8610`.
 - If `firewalld` or another firewall blocks that range, the installer will fail with `failed to fetch kickstart` / `No route to host`.
 - If you set `folder` in `auto.pkrvars.hcl`, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder, so run it before this Packer build.

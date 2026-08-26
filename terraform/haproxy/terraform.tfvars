@@ -1,14 +1,13 @@
 # vSphere credentials (set password via env var: TF_VAR_vsphere_password)
 # export TF_VAR_vsphere_password='YOUR_REAL_PASSWORD'
-vsphere_user   = "administrator@vsphere.local"
-vsphere_server = "vcenter.example.local"
+vsphere_server = "192.168.1.10"
 
 # vSphere inventory
 datacenter    = "LabDatacenter"
 cluster       = "OKD"
-datastore     = "NFS-OKD"
+datastore     = "VMs"
 network       = "VM Network"
-template_name = "rocky9-template"
+template_name = "rhel_9.4-template"
 guest_domain  = "lab.local"
 
 # haproxy vm settings

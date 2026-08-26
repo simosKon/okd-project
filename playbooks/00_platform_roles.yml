@@ -32,9 +32,6 @@
   hosts: localhost
   gather_facts: true
   tags: [platform, vcenter]
-  vars_files:
-  - ../vault_vcenter_deploy.yml
-  - ../vault_ad_connect_user.yml
   roles:
     - { role: vcenter_deploy, when: platform_roles.vcenter_deploy_enabled | bool, tags: [platform, vcenter, vcenter_deploy] }
     - { role: vcenter_configure, when: platform_roles.vcenter_configure_enabled | bool, tags: [platform, vcenter, vcenter_configure] }

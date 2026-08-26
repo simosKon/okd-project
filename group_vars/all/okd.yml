@@ -1,0 +1,34 @@
+infrastructure_okd:
+  load_balancer_vips:
+    - ip: "192.168.1.50"
+      name: "api.okd.lab.local"
+    - ip: "192.168.1.51"
+      name: "apps.okd.lab.local"
+
+  bootstrap:
+    ip: "192.168.1.30"
+    hostname: "bootstrap.okd.lab.local"
+
+  master:
+    - ip: "192.168.1.31"
+      hostname: "master01.okd.lab.local"
+    - ip: "192.168.1.32"
+      hostname: "master02.okd.lab.local"
+    - ip: "192.168.1.33"
+      hostname: "master03.okd.lab.local"
+
+  worker:
+    - ip: "192.168.1.34"
+      hostname: "worker01.okd.lab.local"
+
+okd:
+  cluster_name: "okd"
+  base_domain: "lab.local"
+  version: "4.18.0-okd-scos.10"
+  base_dir: "/opt/okd"
+  install_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/install"
+  tools_dir: "/opt/okd/tools"
+  terraform_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/terraform/okd"
+  reports_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/reports"
+  ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDXB7JUxoaaXfbFi5OxopX7oIlFuVJCllZ3LtItfR1WVqhe75Wxj1CipGksME3OXLHZDFr+dSIqR9NHiS2zDj3yi+zpyyDiqCnKDo1IY/1FwuEJsWU6fdDwebOgQD4EatSswQmjKL9gKduiTiW3LZMUsEYw9Omy6YEMXbVu690b78rXVK5HKOw03Ke8nEB6wDK+TN+HWIKdqwTTGgQXYkEvaspPPMUvCWEDLLBTu8IpOZwxXQMC8IyfUsb89PaDLHFXWi0LPdz7639v7dwoDCiIV5AfC16rYhF/vjxr4TFeAih5IXpqXaR/y+1iEIXwzCfDfDW66L7aN2DQXeiW3pDPRrP0vDa1e+IKNXN4VMlW8IGwLMO3uT0VFXBUi0VzcXAP+rlCTj39fHR+wzgybUXEmQYPJGYvnUC45zrzjNuy+WZLiTymPY8KKI8TFT4zHJj7HHoJXnV/kXcKZE+I0exl2FQ3QzmhmgPbvth+ZoZ52ikn5/cvZRU9BGoszSH/7ds= root@ansible.test.local"
+  pull_secret: "{{ vault_okd_pull_secret | default('' ) }}"

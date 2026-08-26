@@ -74,20 +74,14 @@ The following infrastructure components must exist before execution:
 - Required network connectivity between all components
 
 `community.vmware` collection must be installed on the Ansible control node.
-Secrets must be set (not committed): `vcenter_password`, `esxi_password`, `ad_admin_password`, `okd.pull_secret`.
+Secrets are injected by AWX credentials backed by HashiCorp Vault and must not be committed. Required secret variables include `vcenter_password`, `esxi_password`, `ad_admin_password`, `rh_password`, and `vault_okd_pull_secret`.
 
 Warning: The HAProxy VM is provisioned automatically via Terraform during the infrastructure phase.  
 It does NOT need to exist beforehand.
 
 ## 3. Required Files to Prepare Once
 
-1. Create split vars from examples:
-```bash
-mkdir -p group_vars/all
-cp group_vars/all.example/*.yml group_vars/all/
-```
-
-2. Edit split vars with your real values:
+1. Edit the tracked, non-secret configuration:
 - `group_vars/all/core.yml`
 - `group_vars/all/vcenter.yml`
 - `group_vars/all/okd.yml`
@@ -95,20 +89,13 @@ cp group_vars/all.example/*.yml group_vars/all/
   - `group_vars/all/core.yml -> nfs_vm_storage.pv_disks` must match your actual NFS VM data disk device names.
   - Example `/dev/sdb` is not universal; verify with `lsblk` on your NFS VM before running `lvm_create` / `nfs_conf`.
 
-3. Prepare Terraform vars:
-```bash
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-```
-
-4. Edit `terraform/terraform.tfvars`:
-- `vsphere_user`, `vsphere_server`
+2. Edit the tracked, non-secret `terraform.tfvars` files under `terraform/foundation`, `terraform/haproxy`, and `terraform/okd`:
+- `vsphere_server`
 - `datacenter`, `cluster`, `datastore`, `network`, `template_name`
 - ignition paths (`bootstrap_ignition_b64_file`, `master_ignition_b64_file`, `worker_ignition_b64_file`)
 - node MACs (`bootstrap_mac_address`, `masters[]`, `workers[]`)
 
-5. Vault files expected by infra precheck playbook:
-- `vault_vcenter_deploy.yml`
-- `vault_ad_connect_user.yml`
+3. In AWX, attach the HashiCorp Vault-backed vCenter, ESXi, AD, RHSM, HAProxy, OKD, and Packer credentials required by each Job Template. AWX injects `TF_VAR_vsphere_user`, `TF_VAR_vsphere_password`, Packer credentials, and GOVC credentials.
 
 ## 4. Single Execution Flow
 
@@ -124,7 +111,7 @@ Go/No-Go rule:
 
 ```bash
 # Precheck gate
-ansible-playbook -i inventory.ini playbooks/06_pre_install_infra.yml --ask-vault-pass
+ansible-playbook -i inventory.ini playbooks/06_pre_install_infra.yml
 # Continue only if pre-install infra report is PASS
 # Optional vCenter lifecycle/configuration flow
 ansible-playbook -i inventory.ini playbooks/00_platform_roles.yml
@@ -140,12 +127,10 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml
 - Prerequisite: Terraform requires an existing VM template in vCenter (`template_name`) before provisioning can run
 - If you want template creation to be automated, use **Section 14 (Template Build Automation)**.
 - If you want the templates and later VMs to live inside the shared vSphere folder (for example `OKD`), run `terraform/foundation` before any Packer or Terraform workload stack.
-- To avoid password prompts, copy `terraform/vsphere-auth.env.example` to `terraform/vsphere-auth.env` and `packer/haproxy-template/packer-auth.env.example` to `packer/haproxy-template/packer-auth.env`, then run `source load-env.sh` before Terraform/Packer commands.
+- AWX injects Terraform, Packer, and GOVC credentials from HashiCorp Vault. No credential `.env` files are used.
 
 ```bash
 cd terraform/foundation
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars
 terraform init
 terraform validate
 terraform plan
@@ -175,7 +160,7 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml --tags "baseline, 
 ansible-playbook -i inventory.ini playbooks/02_okd_upi_prepare.yml
 # OKD tools and installation artifacts are persisted on the `ansible` inventory host:
 # /opt/okd/tools and /opt/okd/clusters/<cluster_name>/install
-ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_require_ignition_files=true --ask-vault-pass
+ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_require_ignition_files=true
 # Continue only if pre-install OKD report is PASS
 
 cd terraform/okd
@@ -199,7 +184,7 @@ Note:
 ## 5. Notes for This Repo
 
 - Default initial vCenter deployment target is standalone ESXi local datastore (`deploy_storage_type: local_esxi`).
-- `playbooks/06_pre_install_infra.yml` loads vault vars from `vault_vcenter_deploy.yml` and `vault_ad_connect_user.yml` via `vars_files`.
+- AWX Job Templates supply secret variables through credentials backed by HashiCorp Vault; playbooks do not load local vault files.
 - If `platform_roles.vcenter_deploy_enabled=true`, set valid `infrastructure.vcenter.vcsa_ova_file`.
 - If you deploy vCenter to NFS at first bootstrap, datastore must already be pre-mounted on standalone ESXi (`deploy_storage_type: nfs_pre_mounted`).
 - Use `vmware_debug: true` (or `-e vmware_debug=true`) only for troubleshooting to disable `no_log` in vCenter roles.
@@ -297,11 +282,11 @@ systemctl status haproxy
 ss -lntp | egrep '6443|22623|80|443'
 
 # Optional strict prechecks
-ansible-playbook -i inventory.ini playbooks/06_pre_install_infra.yml --ask-vault-pass -e preinfra_fail_on_critical=true
-ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml --ask-vault-pass -e preokd_require_ignition_files=true -e preokd_fail_on_critical=true
+ansible-playbook -i inventory.ini playbooks/06_pre_install_infra.yml -e preinfra_fail_on_critical=true
+ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_require_ignition_files=true -e preokd_fail_on_critical=true
 
 # Optional: show full VMware module errors during troubleshooting
-ansible-playbook -i inventory.ini playbooks/00_platform_roles.yml --tags vcenter --ask-vault-pass -e vmware_debug=true
+ansible-playbook -i inventory.ini playbooks/00_platform_roles.yml --tags vcenter -e vmware_debug=true
 ```
 
 ## 11. Troubleshooting First Checks
@@ -340,9 +325,7 @@ This repo now includes automated template build workflows under `packer/`:
 
 ```bash
 cd packer/okd-template
-cp okd-template.env.example okd-template.env
-# edit values (vCenter, datastore, network, OVA path, template name)
-source okd-template.env
+# AWX supplies GOVC_USERNAME/GOVC_PASSWORD and the required non-secret job environment.
 bash build_ova_template.sh
 ```
 
@@ -352,15 +335,12 @@ Default target template name: `fedora-coreos-39.20231101.3.0`.
 
 ```bash
 cd packer/haproxy-template
-# set GOVC_* + ISO_* env vars, then:
-source iso-upload.env (all env vars)
+# AWX supplies GOVC credentials and the required ISO_* job environment.
 bash upload_iso.sh
 
-cp example.auto.pkrvars.hcl auto.pkrvars.hcl
-# edit values (vCenter, cluster/datastore/network/folder/template_name)
-packer init .
-packer validate -var-file=auto.pkrvars.hcl .
-packer build -var-file=auto.pkrvars.hcl .
+# Edit the tracked, non-secret auto.pkrvars.hcl as needed. AWX injects the
+# Packer credentials; build.sh generates and removes the temporary ks.cfg.
+bash build.sh
 ```
 
 Default target template name: `rhel_9.4`.
@@ -369,4 +349,4 @@ Important:
 
 - The host that runs `packer build` serves `packer/haproxy-template/http/ks.cfg` over a temporary HTTP server during the RHEL install.
 - That host must allow inbound TCP access from the installer VM network to ports `8600-8610`.
-- Keep `group_vars/all/core.yml` and `group_vars/all.example/core.yml` aligned with the `infrastructure_packer.http.port_min` / `port_max` values when you change the allowed range.
+- Keep `group_vars/all/core.yml` aligned with the Packer HTTP port range when changing `infrastructure_packer.http.port_min` / `port_max`.
