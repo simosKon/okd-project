@@ -216,9 +216,13 @@
       register: vcsa_ova_stat
       when: platform_roles.vcenter_deploy_enabled | default(false)
 
-    - name: Check community.vmware collection presence when vCenter roles are enabled
-      ansible.builtin.command: ansible-galaxy collection list community.vmware
-      register: vmware_collection_check
+    - name: Check pyVmomi availability on the remote execution host
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_python_interpreter | default('/usr/bin/python3') }}"
+          - -c
+          - import pyVmomi
+      register: pyvmomi_import_check
       changed_when: false
       failed_when: false
       when: preinfra_any_vcenter_role_enabled
@@ -246,8 +250,8 @@
         - preinfra_require_nfs_mode
         - (platform_roles.vcenter_deploy_enabled | default(false))
         - preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted'
-        - vmware_collection_check is defined
-        - vmware_collection_check.rc == 0
+        - pyvmomi_import_check is defined
+        - pyvmomi_import_check.rc == 0
         - chk_esxi_list_defined
         - chk_esxi0_username_defined
         - chk_esxi_password_ok
@@ -320,9 +324,9 @@
             + ([] if (not preinfra_require_esxi_mode) else ([] if (chk_esxi_list_defined and ((esxi_443_checks.results | default([]) | rejectattr('failed', 'undefined') | selectattr('failed') | list | length) == 0)) else ['One or more ESXi hosts are unreachable on TCP/443']))
             + ([] if (not preinfra_vcenter_443_required) else ([] if (vcenter_443_check is not defined or vcenter_443_check.failed is not defined or not vcenter_443_check.failed) else ['vCenter is not reachable on TCP/443 but existing vCenter is required for enabled roles']))
             + ([] if (not (platform_roles.vcenter_deploy_enabled | default(false))) else ([] if ((infrastructure.vcenter.vcsa_ova_file | default('') | length > 0) and (vcsa_ova_stat.stat.exists | default(false))) else ['vCenter deploy enabled but vcsa_ova_file is missing/not found']))
-            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted')) else ([] if (vmware_collection_check is defined and vmware_collection_check.rc == 0) else ['Cannot validate nfs_pre_mounted datastore on ESXi: community.vmware is not available on control host']))
+            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted')) else ([] if (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0) else ['Cannot validate nfs_pre_mounted datastore on ESXi: pyVmomi is not available on the remote Ansible host']))
             + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted')) else ([] if (chk_esxi_list_defined and chk_esxi0_username_defined and chk_esxi0_datastore_defined and chk_esxi_password_ok) else ['Cannot validate nfs_pre_mounted datastore on ESXi: missing ESXi vars/credentials (esxi list, username, datastore, or esxi_password)']))
-            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (vmware_collection_check is defined and vmware_collection_check.rc == 0))) else ([] if ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) else ['NFS pre-mounted datastore validation failed on one or more ESXi hosts for vcenter_deploy (nfs_pre_mounted mode)']))
+            + ([] if (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0))) else ([] if ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) else ['NFS pre-mounted datastore validation failed on one or more ESXi hosts for vcenter_deploy (nfs_pre_mounted mode)']))
             + ([] if chk_vcenter_password_ok else ['vcenter_password is empty while vCenter roles are enabled'])
             + ([] if chk_esxi_password_ok else ['esxi_password is empty while ESXi host roles are enabled'])
             + ([] if chk_ad_creds_ok else ['AD join enabled but ad_admin_user/ad_admin_password are missing'])
@@ -330,7 +334,7 @@
         preinfra_warnings: >-
           {{
             []
-            + ([] if (not preinfra_any_vcenter_role_enabled) else ([] if (vmware_collection_check is defined and vmware_collection_check.rc == 0) else ['community.vmware collection not detected on control host']))
+            + ([] if (not preinfra_any_vcenter_role_enabled) else ([] if (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0) else ['pyVmomi is not installed for the Python interpreter on the remote Ansible host']))
             + ([] if (dns_ssh_check is not defined or dns_ssh_check.failed is not defined or not dns_ssh_check.failed) else ['DNS host SSH (TCP/22) is unreachable. This is informational unless your DNS role requires SSH access.'])
             + ([] if (haproxy_ssh_check is not defined or haproxy_ssh_check.failed is not defined or not haproxy_ssh_check.failed) else ['HAProxy host SSH (TCP/22) is unreachable. This is expected before Terraform provisioning; it is required before OKD install.'])
             + ([] if (not preinfra_require_nfs_mode) else ([] if (nfs_ssh_check is not defined or nfs_ssh_check.failed is not defined or not nfs_ssh_check.failed) else ['NFS host SSH (TCP/22) is unreachable. NFS readiness is based on TCP/2049.']))
@@ -498,8 +502,8 @@
             vcenter_443_required: "{{ preinfra_vcenter_443_required }}"
             vcenter_443_reachable: "{{ (not preinfra_vcenter_443_required) or ((vcenter_443_check is not defined) or (vcenter_443_check.failed is not defined) or (not vcenter_443_check.failed)) }}"
             vcsa_ova_file_present: "{{ (not (platform_roles.vcenter_deploy_enabled | default(false))) or ((infrastructure.vcenter.vcsa_ova_file | default('') | length > 0) and (vcsa_ova_stat.stat.exists | default(false))) }}"
-            community_vmware_present: "{{ (not preinfra_any_vcenter_role_enabled) or (vmware_collection_check is defined and vmware_collection_check.rc == 0) }}"
-            premounted_datastore_check_ok: "{{ (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (vmware_collection_check is defined and vmware_collection_check.rc == 0))) or ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) }}"
+            pyvmomi_present: "{{ (not preinfra_any_vcenter_role_enabled) or (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0) }}"
+            premounted_datastore_check_ok: "{{ (not (preinfra_require_nfs_mode and (platform_roles.vcenter_deploy_enabled | default(false)) and preinfra_vcenter_deploy_storage_type == 'nfs_pre_mounted' and (pyvmomi_import_check is defined and pyvmomi_import_check.rc == 0))) or ((preinfra_premounted_datastore_failed_count | default(0) | int) == 0) }}"
             vcenter_password_ok: "{{ chk_vcenter_password_ok }}"
             esxi_password_ok: "{{ chk_esxi_password_ok }}"
             ad_creds_ok: "{{ chk_ad_creds_ok }}"

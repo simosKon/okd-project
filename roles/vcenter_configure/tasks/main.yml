@@ -12,7 +12,7 @@
       ansible.builtin.raw: |
         shell
         /opt/likewise/bin/domainjoin-cli query || true
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: domain_join_query
       changed_when: false
       failed_when: false
@@ -24,18 +24,19 @@
     - name: Join VCSA to AD using domainjoin-cli
       ansible.builtin.raw: |
         shell
-        /opt/likewise/bin/domainjoin-cli join {{ network.domain }} {{ ad_admin_user }} {{ ad_admin_password }}
-      delegate_to: vcenter 
+        /opt/likewise/bin/domainjoin-cli join {{ network.domain | quote }} {{ ad_admin_user | quote }} {{ ad_admin_password | quote }}
+      delegate_to: vcenter01
       register: domain_join_result
       failed_when: domain_join_result.rc != 0 and 'already joined' not in domain_join_result.stdout
       changed_when: "'already joined' not in (domain_join_result.stdout | default('') | lower)"
       when: not vcsa_ad_already_joined
+      no_log: true
 
     - name: Stop all vCenter services
       ansible.builtin.raw: |
         shell
         service-control --stop --all
-      delegate_to: vcenter 
+      delegate_to: vcenter01
       when: domain_join_result is changed
 
     - name: Sleep for 60 seconds to allow services to stop
@@ -47,7 +48,7 @@
       ansible.builtin.raw: |
         shell
         service-control --start --all
-      delegate_to: vcenter
+      delegate_to: vcenter01
       when: domain_join_result is changed
 
     - name: Sleep for 60 seconds to allow services to start
@@ -63,7 +64,7 @@
       ansible.builtin.raw: |
         shell
         /opt/vmware/bin/sso-config.sh -get_identity_sources
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: current_identity_sources
       changed_when: false
 
@@ -79,7 +80,7 @@
       ansible.builtin.raw: |
         shell
         /opt/vmware/bin/sso-config.sh -add_identity_source -type nativead
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: ad_identity_result
       failed_when:
         - ad_identity_result.rc != 0
@@ -92,7 +93,7 @@
       ansible.builtin.raw: |
         shell
         /opt/vmware/bin/sso-config.sh -get_default_identity_sources
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: current_default_identity_sources
       changed_when: false
 
@@ -104,7 +105,7 @@
       ansible.builtin.raw: |
         shell
         /opt/vmware/bin/sso-config.sh -set_default_identity_sources -i "{{ network.domain }}"
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: set_default_identity_result
       changed_when: true
       when: not ad_is_default
@@ -113,7 +114,7 @@
       ansible.builtin.raw: |
         shell
         /opt/vmware/bin/sso-config.sh -get_identity_sources
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: identity_sources
       changed_when: false
   when: (platform_roles.ad_join_enabled | default(false)) | bool
@@ -125,39 +126,39 @@
       ansible.builtin.raw: |
         shell
         grep '^server' /etc/ntp.conf || true
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: ntp_conf_check
     
     - name: Create backup filename
       ansible.builtin.raw: |
         shell
         date +%Y%m%d
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: backup_date
 
     - name: Backup ntp.conf without cmd substitution
       ansible.builtin.raw: |
         shell
         cp /etc/ntp.conf /etc/ntp.conf.backup.{{ backup_date.stdout_lines[-1] }}
-      delegate_to: vcenter
+      delegate_to: vcenter01
 
     - name: Configure NTP if not configured
       ansible.builtin.raw: |
         shell
         echo "server {{ network.ntp_server }} iburst" >> /etc/ntp.conf
-      delegate_to: vcenter
+      delegate_to: vcenter01
       when: network.ntp_server not in ntp_conf_check.stdout | default('')
 
     - name: NTP restart (safe fallback)
       ansible.builtin.raw: |
         shell
         systemctl restart ntpd || pkill -HUP ntpd
-      delegate_to: vcenter
+      delegate_to: vcenter01
 
     - name: Verify contents of ntp.conf after modification
       ansible.builtin.raw: |
         shell
         cat /etc/ntp.conf
-      delegate_to: vcenter
+      delegate_to: vcenter01
       register: verify_ntp_conf
   when: (platform_roles.ntp_conf_enabled | default(true)) | bool

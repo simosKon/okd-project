@@ -87,7 +87,7 @@ infrastructure_vcenter:
     # optional multi-cluster mode:
     # clusters:
     #   - "OKD"
-    vcsa_ova_file: "/mnt/hgfs/OK_Project/OS/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova"  # only for 00_platform_roles.yml (vCenter deploy flow)
+    vcsa_ova_file: "/opt/okd/images/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova"  # only for 00_platform_roles.yml (vCenter deploy flow)
     vcsa_size: "tiny"
     username: "root"
     vcenter_license_key: "{{ vcenter_license_key | default('' ) }}"

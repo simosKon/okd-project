@@ -177,7 +177,7 @@ Note:
 
 - Default initial vCenter deployment target is standalone ESXi local datastore (`deploy_storage_type: local_esxi`).
 - AWX Job Templates supply secret variables through credentials backed by HashiCorp Vault; playbooks do not load local vault files.
-- If `platform_roles.vcenter_deploy_enabled=true`, set valid `infrastructure.vcenter.vcsa_ova_file`.
+- If `platform_roles.vcenter_deploy_enabled=true`, copy the VCSA OVA to the persistent installer host at the configured `infrastructure.vcenter.vcsa_ova_file` path (default: `/opt/okd/images/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova`).
 - If you deploy vCenter to NFS at first bootstrap, datastore must already be pre-mounted on standalone ESXi (`deploy_storage_type: nfs_pre_mounted`).
 - Use `vmware_debug: true` (or `-e vmware_debug=true`) only for troubleshooting to disable `no_log` in vCenter roles.
 
@@ -221,6 +221,11 @@ Run commands from a control host that:
 - has network access to ESXi/vCenter endpoints used by enabled roles
 - has `community.vmware` collection installed when vCenter roles are enabled
 
+When AWX targets the persistent `ansible` host, that host must provide the runtime tools used by remote tasks:
+- `pyVmomi 8.0.3.0.1` for VMware modules
+- Terraform for the Terraform Job Templates
+- `govc` when vSAN roles or related validation commands are enabled
+
 ### AWX Execution Environment
 
 AWX jobs use the reproducible environment defined by:
@@ -259,16 +264,19 @@ The tracked `inventory.ini` is the canonical inventory used by CLI and the AWX p
 ```ini
 
 [dns]
-dns ansible_host=dns.example.local ansible_user=root
+dns01 ansible_host=dns.example.local ansible_user=ansible_admin
 
 [nfs]
-nfs ansible_host=nfs.example.local ansible_user=root
+nfs01 ansible_host=nfs.example.local ansible_user=ansible_admin
 
 [ansible]
-ansible ansible_host=ansible.example.local ansible_user=root
+ansible01 ansible_host=ansible.example.local ansible_user=ansible_admin
 
 [haproxy]
-haproxy ansible_host=haproxy.example.local ansible_user=root
+haproxy01 ansible_host=haproxy.example.local ansible_user=ansible_admin
+
+[vcenter]
+vcenter01 ansible_host=vcenter.example.local ansible_user=root
 
 [infra:children]
 dns
