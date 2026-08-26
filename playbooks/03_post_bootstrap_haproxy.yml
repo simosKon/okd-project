@@ -34,8 +34,6 @@
     csr_auto_approve_enabled: true
     csr_approve_retries: 30
     csr_approve_interval_seconds: 10
-    csr_expected_approved_per_node: 2
-    csr_expected_nodes: "{{ ((infrastructure.master | default([])) + (infrastructure.worker | default([]))) | map(attribute='hostname') | reject('equalto', '') | list }}"
     localhost_home_dir: "{{ lookup('ansible.builtin.env', 'HOME') | default('/root', true) }}"
     okd_install_dir_path: "{{ okd.install_dir | default(localhost_home_dir + '/okd-install') }}"
     okd_tools_dir_path: "{{ okd.tools_dir | default(localhost_home_dir + '/okd-tools') }}"
@@ -101,30 +99,18 @@
       shell: |
         set -euo pipefail
         all_ready=false
-        expected_nodes="{{ csr_expected_nodes | join(' ') }}"
-
-        if [ -z "$expected_nodes" ]; then
-          echo "No expected master/worker nodes found for CSR approval."
-          exit 0
-        fi
 
         for i in $(seq 1 {{ csr_approve_retries }}); do
-          pending="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk '$5=="" {print $1}')"
+          pending="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk '$NF=="Pending" {print $1}')"
           if [ -n "$pending" ]; then
             echo "$pending" | xargs -r {{ oc_bin }} --kubeconfig {{ kubeconfig_path }} adm certificate approve
           fi
 
-          all_ready=true
-          for node in $expected_nodes; do
-            approved_count="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk -v u="system:node:${node}" '$0 ~ u && $0 ~ /Approved/ {count++} END{print count+0}')"
-            if [ "$approved_count" -lt "{{ csr_expected_approved_per_node }}" ]; then
-              all_ready=false
-              break
-            fi
-          done
+          remaining_pending="$({{ oc_bin }} --kubeconfig {{ kubeconfig_path }} get csr --no-headers | awk '$NF=="Pending" {print $1}')"
 
-          if [ "$all_ready" = true ]; then
-            echo "All expected node CSRs reached approved threshold."
+          if [ -z "$remaining_pending" ]; then
+            all_ready=true
+            echo "No pending CSRs remain."
             break
           fi
 
@@ -132,7 +118,7 @@
         done
 
         if [ "$all_ready" != true ]; then
-          echo "CSR auto-approve window ended before all expected nodes reached approved threshold."
+          echo "CSR auto-approve window ended while pending CSRs still remained."
         fi
       args:
         executable: /bin/bash
