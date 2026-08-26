@@ -246,7 +246,7 @@ Create an AWX Container Registry credential when the registry is private, then a
 - ESXi: `8.0U3-24022510`
 - Ansible Core: `2.15.x`
 - `community.vmware`: `3.11.1`
-- `pyvmomi`: `8.0.2.0.1`
+- `pyvmomi`: `8.0.3.0.1`
 
 Known incompatibility:
 - `community.vmware 3.11.1` + `pyvmomi 9.0.0.0` may fail with:
