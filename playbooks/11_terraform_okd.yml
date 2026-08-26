@@ -1,0 +1,9 @@
+---
+- name: Run Terraform OKD stack
+  hosts: ansible
+  become: true
+  gather_facts: false
+  vars:
+    terraform_stack_name: okd
+  roles:
+    - terraform_stack

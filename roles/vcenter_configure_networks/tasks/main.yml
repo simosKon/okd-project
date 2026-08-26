@@ -55,7 +55,6 @@
     username: "administrator@vsphere.local"
     password: "{{ vcenter_password }}"
     validate_certs: false
-  delegate_to: localhost
   register: vcenter_about
   retries: 10
   delay: 15
@@ -76,6 +75,5 @@
   loop: "{{ infrastructure.esxi | product(vcenter_host_portgroups) | list }}"
   loop_control:
     label: "{{ (item.0.hostname | default(item.0.ip)) ~ ' -> ' ~ item.1.name }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 

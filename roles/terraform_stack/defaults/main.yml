@@ -1,0 +1,5 @@
+---
+terraform_binary: terraform
+terraform_operation: plan
+terraform_plan_filename: awx.tfplan
+terraform_remote_root: "{{ okd.terraform_root | default('/opt/okd/clusters/' + okd.cluster_name + '/terraform') }}"

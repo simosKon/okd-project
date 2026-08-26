@@ -1,0 +1,27 @@
+---
+- name: Synchronize Terraform configuration to the persistent installer host
+  hosts: ansible
+  become: true
+  gather_facts: false
+  vars:
+    terraform_remote_root: "{{ okd.terraform_root | default('/opt/okd/clusters/' + okd.cluster_name + '/terraform') }}"
+  tasks:
+    - name: Ensure persistent Terraform root exists
+      ansible.builtin.file:
+        path: "{{ terraform_remote_root }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy tracked Terraform configuration from the AWX project
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../terraform/"
+        dest: "{{ terraform_remote_root }}/"
+        mode: preserve
+      register: terraform_sync_result
+
+    - name: Show Terraform synchronization target
+      ansible.builtin.debug:
+        msg:
+          - "Terraform configuration synchronized to {{ terraform_remote_root }}"
+          - "Existing .terraform directories and state files were not deleted."
+          - "Configuration changed: {{ terraform_sync_result.changed }}"

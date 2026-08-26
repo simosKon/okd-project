@@ -71,7 +71,6 @@
     username: "administrator@vsphere.local"
     password: "{{ vcenter_password }}"
     validate_certs: false
-  delegate_to: localhost
   register: vcenter_about
   retries: 10
   delay: 15
@@ -88,7 +87,6 @@
     validate_certs: false
     return_content: true
     status_code: [200, 201]
-  delegate_to: localhost
   register: vcenter_api_session
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 
@@ -101,7 +99,6 @@
     status_code: 200
     headers:
       vmware-api-session-id: "{{ vcenter_api_session.vmware_api_session_id | default(vcenter_api_session.json | string | regex_replace('^\"|\"$', '')) }}"
-  delegate_to: localhost
   register: vcenter_clusters_api
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 
@@ -127,7 +124,6 @@
     status_code: 200
     headers:
       vmware-api-session-id: "{{ vcenter_api_session.vmware_api_session_id | default(vcenter_api_session.json | string | regex_replace('^\"|\"$', '')) }}"
-  delegate_to: localhost
   register: vcenter_cluster_hosts_api
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when: vcenter_target_cluster_id | length > 0
@@ -192,6 +188,5 @@
   loop: "{{ esxi_hosts_to_join_cluster }}"
   loop_control:
     label: "{{ item.hostname | default(item.ip) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 

@@ -1,9 +1,9 @@
 ---
 - name: Pre-install infra prerequisites and report
-  hosts: localhost
+  hosts: ansible
   gather_facts: true
   vars:
-    preinfra_output_dir: "{{ playbook_dir }}/../reports"
+    preinfra_output_dir: "{{ okd.reports_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/reports') }}"
     preinfra_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
     preinfra_storage_backend: "{{ storage_backend | default('nfs') }}"
     preinfra_fail_on_critical_mode: "{{ (preinfra_fail_on_critical | default(false)) | bool }}"
@@ -236,7 +236,6 @@
         password: "{{ item.password | default(esxi_password | default('')) }}"
         validate_certs: false
         name: "{{ item.datastore }}"
-      delegate_to: localhost
       register: esxi_premounted_datastore_checks
       changed_when: false
       failed_when: false

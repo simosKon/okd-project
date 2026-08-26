@@ -9,4 +9,3 @@
     datacenter_name: "{{ vcenter_datacenter_name }}"
     state: present
     validate_certs: false
-  delegate_to: localhost

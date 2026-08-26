@@ -29,7 +29,7 @@
 
 
 - name: vCenter deployment and post-configuration roles
-  hosts: localhost
+  hosts: ansible
   gather_facts: true
   tags: [platform, vcenter]
   roles:

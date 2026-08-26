@@ -7,7 +7,6 @@
     license: "{{ infrastructure.vcenter.vcenter_license_key }}"
     state: present
     validate_certs: false
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when: infrastructure.vcenter.vcenter_license_key | default('') | length > 0
 
@@ -21,7 +20,6 @@
     state: present
     validate_certs: false
   loop: "{{ infrastructure.esxi | default([]) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when:
     - infrastructure.vcenter.esxi_license_key | default('') | length > 0

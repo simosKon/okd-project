@@ -52,7 +52,6 @@
     username: "administrator@vsphere.local"
     password: "{{ vcenter_password }}"
     validate_certs: false
-  delegate_to: localhost
   register: vcenter_about
   retries: 10
   delay: 15
@@ -90,7 +89,6 @@
   loop: "{{ infrastructure.esxi }}"
   loop_control:
     label: "{{ item.hostname | default(item.ip) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when:
     - vmotion_enabled
@@ -119,7 +117,6 @@
   loop: "{{ infrastructure.esxi }}"
   loop_control:
     label: "{{ item.hostname | default(item.ip) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when:
     - vmotion_enabled
@@ -157,7 +154,6 @@
   loop: "{{ infrastructure.esxi }}"
   loop_control:
     label: "{{ item.hostname | default(item.ip) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when:
     - vsan_vmk_should_run
@@ -185,7 +181,6 @@
   loop: "{{ infrastructure.esxi }}"
   loop_control:
     label: "{{ item.hostname | default(item.ip) }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
   when:
     - vsan_vmk_should_run

@@ -1,0 +1,9 @@
+---
+- name: Run Terraform foundation stack
+  hosts: ansible
+  become: true
+  gather_facts: false
+  vars:
+    terraform_stack_name: foundation
+  roles:
+    - terraform_stack

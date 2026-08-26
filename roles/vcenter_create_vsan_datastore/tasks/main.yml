@@ -22,7 +22,6 @@
     username: "administrator@vsphere.local"
     password: "{{ vcenter_password }}"
     validate_certs: false
-  delegate_to: localhost
   register: vcenter_about
   retries: 10
   delay: 15
@@ -39,7 +38,6 @@
     cluster_name: "{{ vcenter_cluster_name }}"
     enable_vsan: true
     vsan_auto_claim_storage: "{{ vcenter_vsan_auto_claim }}"
-  delegate_to: localhost
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 
 - name: Validate explicit vSAN disk group mapping exists
@@ -113,7 +111,6 @@
     password: "{{ vcenter_password }}"
     validate_certs: false
     datacenter: "{{ vcenter_datacenter_name }}"
-  delegate_to: localhost
   register: vc_datastores
   no_log: "{{ not (vmware_debug | default(false) | bool) }}"
 

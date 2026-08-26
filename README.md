@@ -130,17 +130,11 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml
 - AWX injects Terraform, Packer, and GOVC credentials from HashiCorp Vault. No credential `.env` files are used.
 
 ```bash
-cd terraform/foundation
-terraform init
-terraform validate
-terraform plan
-terraform apply
-
-cd terraform/haproxy
-terraform init
-terraform validate
-terraform plan
-terraform apply
+ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply
+ansible-playbook -i inventory.ini playbooks/10_terraform_haproxy.yml
+ansible-playbook -i inventory.ini playbooks/10_terraform_haproxy.yml -e terraform_operation=apply
 
 # after VM provisioning, configure the HAProxy host with Ansible
 ansible-playbook -i inventory.ini playbooks/01_core_infra.yml --tags "baseline, haproxy"
@@ -163,11 +157,9 @@ ansible-playbook -i inventory.ini playbooks/02_okd_upi_prepare.yml
 ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_require_ignition_files=true
 # Continue only if pre-install OKD report is PASS
 
-cd terraform/okd
-terraform init
-terraform validate
-terraform plan
-terraform apply
+ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
+ansible-playbook -i inventory.ini playbooks/11_terraform_okd.yml
+ansible-playbook -i inventory.ini playbooks/11_terraform_okd.yml -e terraform_operation=apply
 # VM power sequence (only if your provisioning path does NOT auto-power on)
 # 1) bootstrap first
 # 2) after ~2 minutes, masters (and workers)
@@ -243,7 +235,7 @@ Known incompatibility:
 
 ## 9. Inventory Mapping (Minimal Example)
 
-Create your local inventory with `cp inventory.ini.example inventory.ini`.
+The tracked `inventory.ini` is the canonical inventory used by CLI and the AWX project inventory source.
 
 ```ini
 

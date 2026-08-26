@@ -1,0 +1,97 @@
+---
+- name: Validate Terraform stack inputs
+  ansible.builtin.assert:
+    that:
+      - terraform_stack_name is defined
+      - terraform_stack_name in ['foundation', 'haproxy', 'okd']
+      - terraform_operation in ['validate', 'plan', 'apply']
+      - vcenter_username | default('') | length > 0
+      - vcenter_password | default('') | length > 0
+    fail_msg: >-
+      Set a valid terraform_stack_name and terraform_operation, and attach the
+      AWX vCenter credential that injects vcenter_username/vcenter_password.
+
+- name: Set Terraform stack paths
+  ansible.builtin.set_fact:
+    terraform_stack_dir: "{{ terraform_remote_root }}/{{ terraform_stack_name }}"
+    terraform_plan_path: "{{ terraform_remote_root }}/{{ terraform_stack_name }}/{{ terraform_plan_filename }}"
+
+- name: Verify Terraform stack configuration exists
+  ansible.builtin.stat:
+    path: "{{ terraform_stack_dir }}/main.tf"
+  register: terraform_main_tf
+
+- name: Require synchronized Terraform configuration
+  ansible.builtin.assert:
+    that:
+      - terraform_main_tf.stat.exists
+    fail_msg: >-
+      Terraform stack {{ terraform_stack_name }} is missing from
+      {{ terraform_stack_dir }}. Run playbooks/08_sync_terraform.yml first.
+
+- name: Verify Terraform executable
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_binary }}"
+      - version
+  changed_when: false
+
+- name: Initialize Terraform stack
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_binary }}"
+      - init
+      - -input=false
+    chdir: "{{ terraform_stack_dir }}"
+  environment:
+    TF_IN_AUTOMATION: "true"
+    TF_VAR_vsphere_user: "{{ vcenter_username }}"
+    TF_VAR_vsphere_password: "{{ vcenter_password }}"
+  register: terraform_init_result
+  changed_when: "'Terraform has been successfully initialized' in terraform_init_result.stdout"
+
+- name: Validate Terraform stack
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_binary }}"
+      - validate
+      - -no-color
+    chdir: "{{ terraform_stack_dir }}"
+  environment:
+    TF_IN_AUTOMATION: "true"
+    TF_VAR_vsphere_user: "{{ vcenter_username }}"
+    TF_VAR_vsphere_password: "{{ vcenter_password }}"
+  changed_when: false
+
+- name: Create Terraform plan
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_binary }}"
+      - plan
+      - -input=false
+      - -no-color
+      - "-out={{ terraform_plan_path }}"
+    chdir: "{{ terraform_stack_dir }}"
+  environment:
+    TF_IN_AUTOMATION: "true"
+    TF_VAR_vsphere_user: "{{ vcenter_username }}"
+    TF_VAR_vsphere_password: "{{ vcenter_password }}"
+  when: terraform_operation in ['plan', 'apply']
+  changed_when: true
+
+- name: Apply saved Terraform plan
+  ansible.builtin.command:
+    argv:
+      - "{{ terraform_binary }}"
+      - apply
+      - -input=false
+      - -no-color
+      - -auto-approve
+      - "{{ terraform_plan_path }}"
+    chdir: "{{ terraform_stack_dir }}"
+  environment:
+    TF_IN_AUTOMATION: "true"
+    TF_VAR_vsphere_user: "{{ vcenter_username }}"
+    TF_VAR_vsphere_password: "{{ vcenter_password }}"
+  when: terraform_operation == 'apply'
+  changed_when: true

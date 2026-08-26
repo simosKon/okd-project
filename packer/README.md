@@ -15,9 +15,9 @@ This directory automates creation of:
 - Run `terraform/foundation` before Packer whenever `VM_FOLDER` or `folder` is set and you want templates to be placed there
 
 ```bash
-cd terraform/foundation
-terraform init
-terraform apply
+ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply
 ```
 
 ## 1) OKD Template (OVA -> Template)
