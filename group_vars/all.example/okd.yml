@@ -25,7 +25,10 @@ okd:
   cluster_name: "okd"
   base_domain: "example.local"
   version: "4.18.0-okd-scos.10"
-  install_dir: "{{ ansible_env.HOME }}/okd-install"
-  tools_dir: "{{ ansible_env.HOME }}/okd-tools"
+  base_dir: "/opt/okd"
+  install_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/install"
+  tools_dir: "/opt/okd/tools"
+  terraform_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/terraform/okd"
+  reports_dir: "/opt/okd/clusters/{{ okd.cluster_name }}/reports"
   ssh_public_key: ""
   pull_secret: '{"auths":{"fake":{"auth":"aWQ6cGFzcwo="}}}'

@@ -1,11 +1,12 @@
 ---
 - name: Generate post-install validation report
-  hosts: localhost
+  hosts: ansible
+  become: true
   gather_facts: true
   vars:
-    validation_output_dir: "{{ playbook_dir }}/../reports"
-    validation_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('/root/okd-install/auth/kubeconfig', true) }}"
-    validation_oc_bin: "{{ lookup('env', 'OC_BIN') | default('/usr/local/bin/oc', true) }}"
+    validation_output_dir: "{{ okd.reports_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/reports') }}"
+    validation_kubeconfig: "{{ okd.install_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/install') }}/auth/kubeconfig"
+    validation_oc_bin: "{{ okd.tools_dir | default('/opt/okd/tools') }}/oc"
 
   tasks:
     - name: Ensure report output directory exists
@@ -21,7 +22,7 @@
 
     - name: Fail when kubeconfig path is missing
       ansible.builtin.fail:
-        msg: "Kubeconfig not found at {{ validation_kubeconfig }}. Export KUBECONFIG or set validation_kubeconfig."
+        msg: "Kubeconfig not found at {{ validation_kubeconfig }} on the OKD installer host."
       when: not kubeconfig_stat.stat.exists
 
     - name: Validate oc binary is available

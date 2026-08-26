@@ -25,7 +25,8 @@
       tags: [post_bootstrap, haproxy_cleanup, haproxy]
 
 - name: Approve pending CSRs after bootstrap removal (lab helper)
-  hosts: localhost
+  hosts: ansible
+  become: true
   gather_facts: false
   tags: [post_bootstrap, csr_approve, known_hosts_cleanup]
   vars:
@@ -34,9 +35,8 @@
     csr_auto_approve_enabled: true
     csr_approve_retries: 30
     csr_approve_interval_seconds: 10
-    localhost_home_dir: "{{ lookup('ansible.builtin.env', 'HOME') | default('/root', true) }}"
-    okd_install_dir_path: "{{ okd.install_dir | default(localhost_home_dir + '/okd-install') }}"
-    okd_tools_dir_path: "{{ okd.tools_dir | default(localhost_home_dir + '/okd-tools') }}"
+    okd_install_dir_path: "{{ okd.install_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/install') }}"
+    okd_tools_dir_path: "{{ okd.tools_dir | default('/opt/okd/tools') }}"
     kubeconfig_path: "{{ okd_install_dir_path }}/auth/kubeconfig"
     oc_bin: "{{ okd_tools_dir_path }}/oc"
   tasks:
@@ -91,7 +91,7 @@
         that:
           - oc_bin_stat.stat.exists
           - kubeconfig_stat.stat.exists
-        fail_msg: "CSR auto-approve requires {{ oc_bin }} and {{ kubeconfig_path }} on control host."
+        fail_msg: "CSR auto-approve requires {{ oc_bin }} and {{ kubeconfig_path }} on the OKD installer host."
       when: csr_auto_approve_enabled | bool
       tags: [post_bootstrap, csr_approve]
 

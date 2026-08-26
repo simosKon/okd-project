@@ -1,6 +1,7 @@
 ---
 - name: Prepare OKD UPI artifacts (platform none)
-  hosts: localhost
+  hosts: ansible
+  become: true
   gather_facts: true
   tags: [okd_prepare, okd, ignition]
   roles:

@@ -1,10 +1,11 @@
 ﻿---
 - name: Set OKD tools paths
   set_fact:
-    okd_tools_dir: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
-    openshift_install_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/openshift-install' }}"
-    oc_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/oc' }}"
-    kubectl_bin: "{{ (okd.tools_dir | default(ansible_env.HOME + '/okd-tools')) + '/kubectl' }}"
+    okd_tools_dir: "{{ okd.tools_dir | default('/opt/okd/tools') }}"
+    okd_install_dir: "{{ okd.install_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/install') }}"
+    openshift_install_bin: "{{ (okd.tools_dir | default('/opt/okd/tools')) + '/openshift-install' }}"
+    oc_bin: "{{ (okd.tools_dir | default('/opt/okd/tools')) + '/oc' }}"
+    kubectl_bin: "{{ (okd.tools_dir | default('/opt/okd/tools')) + '/kubectl' }}"
 
 - name: Ensure OKD tools directory exists
   file:
@@ -79,7 +80,7 @@
 
 - name: Ensure install dir exists
   file:
-    path: "{{ okd.install_dir }}"
+    path: "{{ okd_install_dir }}"
     state: directory
     mode: '0755'
 
@@ -100,18 +101,18 @@
 - name: Render install-config.yaml (UPI platform none)
   template:
     src: install-config.yaml.j2
-    dest: "{{ okd.install_dir }}/install-config.yaml"
+    dest: "{{ okd_install_dir }}/install-config.yaml"
     mode: '0600'
 
 - name: Create manifests
-  command: "{{ openshift_install_bin }} create manifests --dir {{ okd.install_dir }}"
+  command: "{{ openshift_install_bin }} create manifests --dir {{ okd_install_dir }}"
   args:
-    creates: "{{ okd.install_dir }}/manifests/cluster-scheduler-02-config.yml"
+    creates: "{{ okd_install_dir }}/manifests/cluster-scheduler-02-config.yml"
 
 - name: Create ignition configs
-  command: "{{ openshift_install_bin }} create ignition-configs --dir {{ okd.install_dir }}"
+  command: "{{ openshift_install_bin }} create ignition-configs --dir {{ okd_install_dir }}"
   args:
-    creates: "{{ okd.install_dir }}/bootstrap.ign"
+    creates: "{{ okd_install_dir }}/bootstrap.ign"
 
 - name: Create base64 ignition artifacts
   shell: |
@@ -119,7 +120,7 @@
     base64 -w0 master.ign > master.64
     base64 -w0 worker.ign > worker.64
   args:
-    chdir: "{{ okd.install_dir }}"
+    chdir: "{{ okd_install_dir }}"
 
 - name: Read CoreOS stream metadata from openshift-install
   command: "{{ openshift_install_bin }} coreos print-stream-json"
@@ -139,16 +140,16 @@
 - name: Show next steps
   debug:
     msg:
-      - "Install dir: {{ okd.install_dir }}"
-      - "Generated file: {{ okd.install_dir }}/install-config.yaml"
-      - "Generated file: {{ okd.install_dir }}/bootstrap.ign"
-      - "Generated file: {{ okd.install_dir }}/master.ign"
-      - "Generated file: {{ okd.install_dir }}/worker.ign"
-      - "Generated file: {{ okd.install_dir }}/bootstrap.64"
-      - "Generated file: {{ okd.install_dir }}/master.64"
-      - "Generated file: {{ okd.install_dir }}/worker.64"
+      - "Install dir: {{ okd_install_dir }}"
+      - "Generated file: {{ okd_install_dir }}/install-config.yaml"
+      - "Generated file: {{ okd_install_dir }}/bootstrap.ign"
+      - "Generated file: {{ okd_install_dir }}/master.ign"
+      - "Generated file: {{ okd_install_dir }}/worker.ign"
+      - "Generated file: {{ okd_install_dir }}/bootstrap.64"
+      - "Generated file: {{ okd_install_dir }}/master.64"
+      - "Generated file: {{ okd_install_dir }}/worker.64"
       - "CoreOS VMware OVA URL for OKD {{ okd.version }}: {{ coreos_vmware_ova_url }}"
       - "CoreOS VMware OVA checksum (stream metadata): {{ coreos_vmware_ova_checksum }}"
       - "Next: run terraform plan/apply from terraform/ using the generated *.64 files"
-      - "Then monitor bootstrap: {{ openshift_install_bin }} --dir {{ okd.install_dir }} wait-for bootstrap-complete --log-level=debug"
+      - "Then monitor bootstrap: {{ openshift_install_bin }} --dir {{ okd_install_dir }} wait-for bootstrap-complete --log-level=debug"
       - "After bootstrap: ansible-playbook playbooks/03_post_bootstrap_haproxy.yml"

@@ -1,0 +1,125 @@
+---
+- name: Create a test Kubernetes CSR for approval validation
+  hosts: localhost
+  gather_facts: false
+  tags: [test_csr, csr_approve]
+  vars:
+    localhost_home_dir: "{{ lookup('ansible.builtin.env', 'HOME') | default('/root', true) }}"
+    testcsr_okd_install_dir_path: "{{ okd.install_dir | default(localhost_home_dir + '/okd-install') }}"
+    testcsr_okd_tools_dir_path: "{{ okd.tools_dir | default(localhost_home_dir + '/okd-tools') }}"
+    testcsr_kubeconfig_path: "{{ testcsr_okd_install_dir_path }}/auth/kubeconfig"
+    testcsr_oc_bin: "{{ testcsr_okd_tools_dir_path }}/oc"
+    testcsr_name: "{{ test_csr_name | default('ansible-test-csr') }}"
+    testcsr_subject_cn: "{{ test_csr_subject_cn | default('ansible-test-user') }}"
+  tasks:
+    - name: Verify oc binary exists
+      ansible.builtin.stat:
+        path: "{{ testcsr_oc_bin }}"
+      register: testcsr_oc_bin_stat
+
+    - name: Verify kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ testcsr_kubeconfig_path }}"
+      register: testcsr_kubeconfig_stat
+
+    - name: Validate prerequisites for test CSR creation
+      ansible.builtin.assert:
+        that:
+          - testcsr_oc_bin_stat.stat.exists
+          - testcsr_kubeconfig_stat.stat.exists
+        fail_msg: "Test CSR creation requires {{ testcsr_oc_bin }} and {{ testcsr_kubeconfig_path }} on control host."
+
+    - name: Create temporary workspace for test CSR files
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: test-csr
+      register: testcsr_tmpdir
+
+    - name: Generate private key for test CSR
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - genrsa
+          - -out
+          - "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.key"
+          - "2048"
+      changed_when: true
+
+    - name: Generate certificate signing request
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -new
+          - -key
+          - "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.key"
+          - -out
+          - "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.csr"
+          - -subj
+          - "/CN={{ testcsr_subject_cn }}"
+      changed_when: true
+
+    - name: Read test CSR file
+      ansible.builtin.slurp:
+        path: "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.csr"
+      register: testcsr_csr_raw
+
+    - name: Write test CSR manifest
+      ansible.builtin.copy:
+        dest: "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.yaml"
+        mode: "0600"
+        content: |
+          apiVersion: certificates.k8s.io/v1
+          kind: CertificateSigningRequest
+          metadata:
+            name: {{ testcsr_name }}
+          spec:
+            request: {{ testcsr_csr_raw.content }}
+            signerName: kubernetes.io/kube-apiserver-client
+            usages:
+              - client auth
+
+    - name: Delete existing test CSR if present
+      ansible.builtin.command:
+        argv:
+          - "{{ testcsr_oc_bin }}"
+          - --kubeconfig
+          - "{{ testcsr_kubeconfig_path }}"
+          - delete
+          - csr
+          - "{{ testcsr_name }}"
+          - --ignore-not-found=true
+      changed_when: false
+
+    - name: Apply test CSR manifest
+      ansible.builtin.command:
+        argv:
+          - "{{ testcsr_oc_bin }}"
+          - --kubeconfig
+          - "{{ testcsr_kubeconfig_path }}"
+          - apply
+          - -f
+          - "{{ testcsr_tmpdir.path }}/{{ testcsr_name }}.yaml"
+      register: testcsr_apply_result
+      changed_when: "'created' in testcsr_apply_result.stdout or 'configured' in testcsr_apply_result.stdout"
+
+    - name: Fetch test CSR status
+      ansible.builtin.command:
+        argv:
+          - "{{ testcsr_oc_bin }}"
+          - --kubeconfig
+          - "{{ testcsr_kubeconfig_path }}"
+          - get
+          - csr
+          - "{{ testcsr_name }}"
+          - -o
+          - wide
+      register: testcsr_status
+      changed_when: false
+
+    - name: Print test CSR status
+      ansible.builtin.debug:
+        msg:
+          - "Created test CSR: {{ testcsr_name }}"
+          - "Current status:"
+          - "{{ testcsr_status.stdout }}"

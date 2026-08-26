@@ -1,14 +1,14 @@
 ---
 - name: Pre-install OKD prerequisites and report
-  hosts: localhost
+  hosts: ansible
+  become: true
   gather_facts: true
   vars:
-    preokd_repo_dir: "{{ playbook_dir | dirname }}"
-    preokd_output_dir: "{{ preokd_repo_dir }}/reports"
+    preokd_output_dir: "{{ okd.reports_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/reports') }}"
     preokd_timestamp: "{{ ansible_date_time.date }}-{{ ansible_date_time.time | regex_replace(':', '') }}"
-    preokd_install_dir: "{{ okd.install_dir | default(ansible_env.HOME + '/okd-install') }}"
-    preokd_tools_dir: "{{ okd.tools_dir | default(ansible_env.HOME + '/okd-tools') }}"
-    preokd_terraform_dir: "{{ preokd_repo_dir }}/terraform/okd"
+    preokd_install_dir: "{{ okd.install_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/install') }}"
+    preokd_tools_dir: "{{ okd.tools_dir | default('/opt/okd/tools') }}"
+    preokd_terraform_dir: "{{ okd.terraform_dir | default('/opt/okd/clusters/' + okd.cluster_name + '/terraform/okd') }}"
     preokd_require_ignition_files_mode: "{{ (preokd_require_ignition_files | default(false)) | bool }}"
     preokd_fail_on_critical_mode: "{{ (preokd_fail_on_critical | default(false)) | bool }}"
     preokd_require_haproxy_mode: "{{ (preokd_require_haproxy | default(true)) | bool }}"
@@ -286,7 +286,7 @@
           - "If API names resolve but install still fails, validate HAProxy listeners/backends and node-to-VIP reachability."
           - "If binaries/ignitions are present but steps fail, verify file permissions and exact paths used by Terraform."
           - "Check control-host firewall/routing and VM network/VLAN placement for bootstrap, masters, and worker."
-          - "Use installer log correlation (/root/okd-install/.openshift_install.log) to confirm whether issue is DNS, LB, cert, or node bootstrap."
+          - "Use installer log correlation ({{ preokd_install_dir }}/.openshift_install.log) to confirm whether issue is DNS, LB, cert, or node bootstrap."
 
     - name: Build OKD report
       ansible.builtin.set_fact:
