@@ -11,4 +11,4 @@ dependencies:
   system: bindep.txt
 
 options:
-  package_manager_path: /usr/bin/microdnf
+  package_manager_path: /usr/bin/dnf
