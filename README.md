@@ -221,6 +221,25 @@ Run commands from a control host that:
 - has network access to ESXi/vCenter endpoints used by enabled roles
 - has `community.vmware` collection installed when vCenter roles are enabled
 
+### AWX Execution Environment
+
+AWX jobs use the reproducible environment defined by:
+
+- `execution-environment/execution-environment.yml`
+- `execution-environment/requirements.yml`
+- `execution-environment/requirements.txt`
+- `execution-environment/bindep.txt`
+
+Build and publish it from a Linux host with `ansible-builder` and Podman or Docker:
+
+```bash
+ansible-builder build --file execution-environment/execution-environment.yml --tag 192.168.1.170:3030/skonsoulas/okd-ee:1.0 --container-runtime podman
+podman login --tls-verify=false 192.168.1.170:3030
+podman push --tls-verify=false 192.168.1.170:3030/skonsoulas/okd-ee:1.0
+```
+
+Create an AWX Container Registry credential when the registry is private, then add an Execution Environment using the published image and select it on the OKD Job Templates.
+
 ## 8. Validated Versions (Lab Baseline)
 
 - VCSA OVA: `vmware-vcsa-8.0.1.00000-21560480_OVF10`
