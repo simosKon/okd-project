@@ -33,6 +33,7 @@ packer/haproxy-template/http/ks.cfg
 *.p12
 *.ini
 !*.ini.example
+!inventory.ini
 *.kubeconfig
 *.log
 *.tmp
