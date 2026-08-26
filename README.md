@@ -173,6 +173,8 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml --tags "baseline, 
 
 ```bash
 ansible-playbook -i inventory.ini playbooks/02_okd_upi_prepare.yml
+# OKD tools and installation artifacts are persisted on the `ansible` inventory host:
+# /opt/okd/tools and /opt/okd/clusters/<cluster_name>/install
 ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_require_ignition_files=true --ask-vault-pass
 # Continue only if pre-install OKD report is PASS
 
@@ -184,9 +186,9 @@ terraform apply
 # VM power sequence (only if your provisioning path does NOT auto-power on)
 # 1) bootstrap first
 # 2) after ~2 minutes, masters (and workers)
-/root/okd-tools/openshift-install --dir /root/okd-install wait-for bootstrap-complete --log-level=debug
+/opt/okd/tools/openshift-install --dir /opt/okd/clusters/okd/install wait-for bootstrap-complete --log-level=debug
 ansible-playbook -i inventory.ini playbooks/03_post_bootstrap_haproxy.yml
-/root/okd-tools/openshift-install --dir /root/okd-install wait-for install-complete --log-level=debug
+/opt/okd/tools/openshift-install --dir /opt/okd/clusters/okd/install wait-for install-complete --log-level=debug
 ansible-playbook -i inventory.ini playbooks/05_post_install_validation.yml
 ```
 
