@@ -1,0 +1,37 @@
+---
+- name: Download and upload the RHEL ISO to vSphere
+  hosts: ansible
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Download the RHEL ISO from MinIO
+      ansible.builtin.include_role:
+        name: minio_artifact
+      vars:
+        minio_artifact_bucket: "{{ artifact_repository.rhel_iso.bucket }}"
+        minio_artifact_object: "{{ artifact_repository.rhel_iso.object }}"
+        minio_artifact_destination: "{{ artifact_repository.rhel_iso.destination }}"
+        minio_artifact_checksum: "{{ artifact_repository.rhel_iso.checksum }}"
+
+    - name: Verify govc is installed
+      ansible.builtin.command: govc version
+      changed_when: false
+
+  tasks:
+    - name: Upload the RHEL ISO to the vSphere datastore
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ packer_automation.remote_root }}/haproxy-template/upload_iso.sh"
+      environment:
+        GOVC_URL: "{{ infrastructure.vcenter.hostname }}"
+        GOVC_USERNAME: "{{ vcenter_username }}"
+        GOVC_PASSWORD: "{{ vcenter_password }}"
+        GOVC_INSECURE: "true"
+        GOVC_DATACENTER: "{{ infrastructure.vcenter.datacenter_name }}"
+        ISO_LOCAL_PATH: "{{ artifact_repository.rhel_iso.destination }}"
+        ISO_DATASTORE: "{{ infrastructure.esxi[0].datastore }}"
+        ISO_DATASTORE_PATH: "{{ packer_automation.rhel_iso_datastore_path }}"
+      register: rhel_iso_upload
+      changed_when: "'uploaded iso' in (rhel_iso_upload.stdout | lower)"
+      no_log: "{{ not (vmware_debug | default(false) | bool) }}"

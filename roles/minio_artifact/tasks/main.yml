@@ -1,0 +1,119 @@
+---
+- name: Validate MinIO artifact inputs
+  ansible.builtin.assert:
+    that:
+      - minio_endpoint | length > 0
+      - minio_access_key | length > 0
+      - minio_secret_key | length > 0
+      - minio_artifact_bucket | length > 0
+      - minio_artifact_object | length > 0
+      - minio_artifact_destination | length > 0
+    fail_msg: >-
+      Attach the AWX MinIO credential and provide bucket, object, and destination.
+  no_log: true
+
+- name: Ensure persistent tools and artifact directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ minio_mc_binary | dirname }}"
+    - "{{ minio_artifact_destination | dirname }}"
+
+- name: Install the MinIO client when missing
+  ansible.builtin.get_url:
+    url: "{{ minio_mc_download_url }}"
+    dest: "{{ minio_mc_binary }}"
+    mode: "0755"
+    force: false
+
+- name: Inspect existing artifact
+  ansible.builtin.stat:
+    path: "{{ minio_artifact_destination }}"
+    checksum_algorithm: sha256
+  register: minio_existing_artifact
+
+- name: Decide whether the artifact must be downloaded
+  ansible.builtin.set_fact:
+    minio_artifact_download_required: >-
+      {{
+        (not minio_existing_artifact.stat.exists) or
+        ((minio_artifact_checksum | default('') | length > 0) and
+         (minio_existing_artifact.stat.checksum | default('') != minio_artifact_checksum))
+      }}
+
+- name: Download artifact from MinIO
+  when: minio_artifact_download_required | bool
+  block:
+    - name: Create temporary MinIO client configuration directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: awx-minio-
+      register: minio_config_dir
+
+    - name: Configure temporary MinIO alias
+      ansible.builtin.command:
+        argv:
+          - "{{ minio_mc_binary }}"
+          - --config-dir
+          - "{{ minio_config_dir.path }}"
+          - alias
+          - set
+          - artifacts
+          - "{{ minio_endpoint }}"
+          - "{{ minio_access_key }}"
+          - "{{ minio_secret_key }}"
+      changed_when: false
+      no_log: true
+
+    - name: Download MinIO object to a temporary destination
+      ansible.builtin.command:
+        argv:
+          - "{{ minio_mc_binary }}"
+          - --config-dir
+          - "{{ minio_config_dir.path }}"
+          - cp
+          - "artifacts/{{ minio_artifact_bucket }}/{{ minio_artifact_object }}"
+          - "{{ minio_artifact_destination }}.download"
+      no_log: true
+
+    - name: Inspect downloaded artifact
+      ansible.builtin.stat:
+        path: "{{ minio_artifact_destination }}.download"
+        checksum_algorithm: sha256
+      register: minio_downloaded_artifact
+
+    - name: Validate downloaded artifact checksum when configured
+      ansible.builtin.assert:
+        that:
+          - minio_downloaded_artifact.stat.exists
+          - minio_downloaded_artifact.stat.size | int > 0
+          - (minio_artifact_checksum | default('') | length == 0) or (minio_downloaded_artifact.stat.checksum == minio_artifact_checksum)
+        fail_msg: "Downloaded artifact is empty or has an unexpected SHA-256 checksum."
+
+    - name: Publish downloaded artifact atomically
+      ansible.builtin.command:
+        argv:
+          - mv
+          - -f
+          - "{{ minio_artifact_destination }}.download"
+          - "{{ minio_artifact_destination }}"
+      changed_when: true
+
+  always:
+    - name: Remove temporary MinIO client configuration
+      ansible.builtin.file:
+        path: "{{ minio_config_dir.path }}"
+        state: absent
+      when: minio_config_dir is defined and minio_config_dir.path is defined
+      no_log: true
+
+    - name: Remove incomplete artifact download
+      ansible.builtin.file:
+        path: "{{ minio_artifact_destination }}.download"
+        state: absent
+
+- name: Report artifact location
+  ansible.builtin.debug:
+    msg: "Artifact is available at {{ minio_artifact_destination }}"

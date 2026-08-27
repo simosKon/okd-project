@@ -4,7 +4,7 @@
     that:
       - terraform_stack_name is defined
       - terraform_stack_name in ['foundation', 'haproxy', 'okd']
-      - terraform_operation in ['validate', 'plan', 'apply']
+      - terraform_operation in ['validate', 'plan', 'apply', 'apply_saved']
       - vcenter_username | default('') | length > 0
       - vcenter_password | default('') | length > 0
     fail_msg: >-
@@ -79,6 +79,21 @@
   when: terraform_operation in ['plan', 'apply']
   changed_when: true
 
+- name: Verify the approved Terraform plan exists
+  ansible.builtin.stat:
+    path: "{{ terraform_plan_path }}"
+  register: terraform_saved_plan
+  when: terraform_operation == 'apply_saved'
+
+- name: Require an existing approved Terraform plan
+  ansible.builtin.assert:
+    that:
+      - terraform_saved_plan.stat.exists
+    fail_msg: >-
+      Saved plan {{ terraform_plan_path }} does not exist. Run the matching
+      Terraform Plan Job Template before approving apply_saved.
+  when: terraform_operation == 'apply_saved'
+
 - name: Apply saved Terraform plan
   ansible.builtin.command:
     argv:
@@ -93,5 +108,5 @@
     TF_IN_AUTOMATION: "true"
     TF_VAR_vsphere_user: "{{ vcenter_username }}"
     TF_VAR_vsphere_password: "{{ vcenter_password }}"
-  when: terraform_operation == 'apply'
+  when: terraform_operation in ['apply', 'apply_saved']
   changed_when: true

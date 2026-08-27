@@ -95,7 +95,7 @@ It does NOT need to exist beforehand.
 - ignition paths (`bootstrap_ignition_b64_file`, `master_ignition_b64_file`, `worker_ignition_b64_file`)
 - node MACs (`bootstrap_mac_address`, `masters[]`, `workers[]`)
 
-3. In AWX, attach the HashiCorp Vault-backed vCenter, ESXi, AD, RHSM, HAProxy, OKD, and Packer credentials required by each Job Template. AWX injects `TF_VAR_vsphere_user`, `TF_VAR_vsphere_password`, Packer credentials, and GOVC credentials.
+3. In AWX, attach the HashiCorp Vault-backed vCenter, ESXi, AD, RHSM, HAProxy, OKD, Packer, and read-only MinIO credentials required by each Job Template. AWX injects Terraform, Packer, GOVC, and MinIO credentials.
 
 ## 4. Single Execution Flow
 
@@ -132,9 +132,12 @@ ansible-playbook -i inventory.ini playbooks/01_core_infra.yml
 ```bash
 ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
 ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml
-ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply_saved
+ansible-playbook -i inventory.ini playbooks/12_sync_packer.yml
+ansible-playbook -i inventory.ini playbooks/15_upload_rhel_iso.yml
+ansible-playbook -i inventory.ini playbooks/16_build_haproxy_template.yml
 ansible-playbook -i inventory.ini playbooks/10_terraform_haproxy.yml
-ansible-playbook -i inventory.ini playbooks/10_terraform_haproxy.yml -e terraform_operation=apply
+ansible-playbook -i inventory.ini playbooks/10_terraform_haproxy.yml -e terraform_operation=apply_saved
 
 # after VM provisioning, configure the HAProxy host with Ansible
 ansible-playbook -i inventory.ini playbooks/01_core_infra.yml --tags "baseline, haproxy"
@@ -158,16 +161,26 @@ ansible-playbook -i inventory.ini playbooks/07_pre_install_okd.yml -e preokd_req
 # Continue only if pre-install OKD report is PASS
 
 ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
+ansible-playbook -i inventory.ini playbooks/12_sync_packer.yml
+ansible-playbook -i inventory.ini playbooks/14_build_okd_template.yml
 ansible-playbook -i inventory.ini playbooks/11_terraform_okd.yml
-ansible-playbook -i inventory.ini playbooks/11_terraform_okd.yml -e terraform_operation=apply
+ansible-playbook -i inventory.ini playbooks/11_terraform_okd.yml -e terraform_operation=apply_saved
 # VM power sequence (only if your provisioning path does NOT auto-power on)
 # 1) bootstrap first
 # 2) after ~2 minutes, masters (and workers)
-/opt/okd/tools/openshift-install --dir /opt/okd/clusters/okd/install wait-for bootstrap-complete --log-level=debug
+ansible-playbook -i inventory.ini playbooks/17_wait_for_okd.yml -e okd_wait_phase_input=bootstrap-complete
 ansible-playbook -i inventory.ini playbooks/03_post_bootstrap_haproxy.yml
-/opt/okd/tools/openshift-install --dir /opt/okd/clusters/okd/install wait-for install-complete --log-level=debug
+ansible-playbook -i inventory.ini playbooks/17_wait_for_okd.yml -e okd_wait_phase_input=install-complete
 ansible-playbook -i inventory.ini playbooks/05_post_install_validation.yml
 ```
+
+Terraform `plan` writes a persistent `awx.tfplan`. After approval, use `terraform_operation=apply_saved` to apply that exact saved plan without generating a replacement plan.
+
+Large installation artifacts are stored in MinIO and downloaded to `/opt/okd/artifacts` on the persistent `ansible` host. The current objects are:
+
+- `ova/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova`
+- `ova/fedora-coreos-39.20231101.3.0-vmware.x86_64.ova`
+- `iso/rhel-9.4-x86_64-dvd.iso`
 
 Note:
 - `terraform/foundation` is the single owner of the shared vSphere VM folder (for example `OKD`).
@@ -177,7 +190,7 @@ Note:
 
 - Default initial vCenter deployment target is standalone ESXi local datastore (`deploy_storage_type: local_esxi`).
 - AWX Job Templates supply secret variables through credentials backed by HashiCorp Vault; playbooks do not load local vault files.
-- If `platform_roles.vcenter_deploy_enabled=true`, copy the VCSA OVA to the persistent installer host at the configured `infrastructure.vcenter.vcsa_ova_file` path (default: `/opt/okd/images/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova`).
+- If `platform_roles.vcenter_deploy_enabled=true`, run `playbooks/13_download_vcsa_ova.yml` to download the VCSA OVA from MinIO to the configured `infrastructure.vcenter.vcsa_ova_file` path.
 - If you deploy vCenter to NFS at first bootstrap, datastore must already be pre-mounted on standalone ESXi (`deploy_storage_type: nfs_pre_mounted`).
 - Use `vmware_debug: true` (or `-e vmware_debug=true`) only for troubleshooting to disable `no_log` in vCenter roles.
 

@@ -1,0 +1,34 @@
+---
+- name: Build the HAProxy vSphere template with Packer
+  hosts: ansible
+  become: true
+  gather_facts: false
+  vars:
+    packer_ssh_password: "{{ lookup('ansible.builtin.env', 'PKR_VAR_ssh_password') }}"
+  pre_tasks:
+    - name: Validate Packer credentials
+      ansible.builtin.assert:
+        that:
+          - vcenter_username | default('') | length > 0
+          - vcenter_password | default('') | length > 0
+          - packer_ssh_password | length > 0
+        fail_msg: "Attach the AWX vCenter and Packer credentials."
+      no_log: true
+
+    - name: Verify Packer is installed
+      ansible.builtin.command: packer version
+      changed_when: false
+
+  tasks:
+    - name: Run the HAProxy Packer build
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ packer_automation.remote_root }}/haproxy-template/build.sh"
+      args:
+        chdir: "{{ packer_automation.remote_root }}/haproxy-template"
+      environment:
+        PKR_VAR_vcenter_username: "{{ vcenter_username }}"
+        PKR_VAR_vcenter_password: "{{ vcenter_password }}"
+        PKR_VAR_ssh_password: "{{ packer_ssh_password }}"
+      no_log: "{{ not (vmware_debug | default(false) | bool) }}"

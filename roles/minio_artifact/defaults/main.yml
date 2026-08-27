@@ -1,0 +1,7 @@
+---
+minio_endpoint: "{{ lookup('ansible.builtin.env', 'MINIO_ENDPOINT') | default(artifact_repository.endpoint, true) }}"
+minio_access_key: "{{ lookup('ansible.builtin.env', 'MINIO_ACCESS_KEY') }}"
+minio_secret_key: "{{ lookup('ansible.builtin.env', 'MINIO_SECRET_KEY') }}"
+minio_mc_binary: "{{ artifact_repository.mc_binary }}"
+minio_mc_download_url: "{{ artifact_repository.mc_download_url }}"
+minio_artifact_checksum: ""

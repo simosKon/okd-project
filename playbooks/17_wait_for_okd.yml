@@ -1,0 +1,37 @@
+---
+- name: Wait for an OKD installation milestone
+  hosts: ansible
+  become: true
+  gather_facts: false
+  vars:
+    okd_wait_phase: "{{ okd_wait_phase_input | default('bootstrap-complete') }}"
+    okd_wait_install_dir: "{{ okd.install_dir }}"
+    okd_wait_binary: "{{ okd.tools_dir }}/openshift-install"
+  tasks:
+    - name: Validate requested OKD wait phase
+      ansible.builtin.assert:
+        that:
+          - okd_wait_phase in ['bootstrap-complete', 'install-complete']
+        fail_msg: "okd_wait_phase_input must be bootstrap-complete or install-complete."
+
+    - name: Verify openshift-install exists
+      ansible.builtin.stat:
+        path: "{{ okd_wait_binary }}"
+      register: okd_wait_binary_stat
+
+    - name: Require openshift-install
+      ansible.builtin.assert:
+        that:
+          - okd_wait_binary_stat.stat.exists
+        fail_msg: "openshift-install was not found at {{ okd_wait_binary }}."
+
+    - name: Wait for OKD milestone
+      ansible.builtin.command:
+        argv:
+          - "{{ okd_wait_binary }}"
+          - --dir
+          - "{{ okd_wait_install_dir }}"
+          - wait-for
+          - "{{ okd_wait_phase }}"
+          - --log-level=debug
+      changed_when: false

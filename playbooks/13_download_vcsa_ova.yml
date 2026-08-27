@@ -1,0 +1,12 @@
+---
+- name: Download the VCSA OVA from MinIO
+  hosts: ansible
+  become: true
+  gather_facts: false
+  roles:
+    - role: minio_artifact
+      vars:
+        minio_artifact_bucket: "{{ artifact_repository.vcsa_ova.bucket }}"
+        minio_artifact_object: "{{ artifact_repository.vcsa_ova.object }}"
+        minio_artifact_destination: "{{ artifact_repository.vcsa_ova.destination }}"
+        minio_artifact_checksum: "{{ artifact_repository.vcsa_ova.checksum }}"

@@ -9,6 +9,7 @@ This directory automates creation of:
 
 - `govc` installed and reachable in `PATH`
 - `packer` installed (`hashicorp/packer`)
+- AWX read-only MinIO credential attached to artifact download jobs
 - vCenter credentials with permissions to create VM/template/folder
 - The host running `packer build` must allow inbound TCP access from the installer VM network to the temporary Packer HTTP server range `8600-8610`
 - For a fully automated pipeline, create the shared VM folder first with `terraform/foundation`
@@ -17,39 +18,32 @@ This directory automates creation of:
 ```bash
 ansible-playbook -i inventory.ini playbooks/08_sync_terraform.yml
 ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml
-ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply
+ansible-playbook -i inventory.ini playbooks/09_terraform_foundation.yml -e terraform_operation=apply_saved
+ansible-playbook -i inventory.ini playbooks/12_sync_packer.yml
 ```
 
 ## 1) OKD Template (OVA -> Template)
 
-Use the govc script:
+Use the AWX wrapper, which downloads the OVA from MinIO and runs the govc script on the persistent `ansible` host:
 
 ```bash
-cd packer/okd-template
-# AWX injects GOVC_USERNAME/GOVC_PASSWORD. Supply the remaining required
-# non-secret variables through the Job Template environment.
-bash build_ova_template.sh
+ansible-playbook -i inventory.ini playbooks/14_build_okd_template.yml
 ```
 
 If `VM_FOLDER` is set, that folder must already exist in vCenter. In this repo, `terraform/foundation` is the intended owner of that folder.
 
 ## 2) HAProxy Template (ISO -> VM -> Template)
 
-First upload ISO to datastore:
+Download the ISO from MinIO and upload it to the datastore:
 
 ```bash
-cd packer/haproxy-template
-# AWX injects GOVC credentials. Supply ISO_LOCAL_PATH, ISO_DATASTORE,
-# ISO_DATASTORE_PATH, GOVC_URL, GOVC_INSECURE, and GOVC_DATACENTER.
-bash upload_iso.sh
+ansible-playbook -i inventory.ini playbooks/15_upload_rhel_iso.yml
 ```
 
 Then build with Packer:
 
 ```bash
-# Edit the tracked, non-secret auto.pkrvars.hcl as needed. AWX injects
-# PKR_VAR_vcenter_username, PKR_VAR_vcenter_password, and PKR_VAR_ssh_password.
-bash build.sh
+ansible-playbook -i inventory.ini playbooks/16_build_haproxy_template.yml
 ```
 
 Notes:

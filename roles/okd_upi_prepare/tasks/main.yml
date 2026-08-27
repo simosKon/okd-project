@@ -151,5 +151,5 @@
       - "CoreOS VMware OVA URL for OKD {{ okd.version }}: {{ coreos_vmware_ova_url }}"
       - "CoreOS VMware OVA checksum (stream metadata): {{ coreos_vmware_ova_checksum }}"
       - "Next: run terraform plan/apply from terraform/ using the generated *.64 files"
-      - "Then monitor bootstrap: {{ openshift_install_bin }} --dir {{ okd_install_dir }} wait-for bootstrap-complete --log-level=debug"
+      - "Then run playbooks/17_wait_for_okd.yml with okd_wait_phase_input=bootstrap-complete"
       - "After bootstrap: ansible-playbook playbooks/03_post_bootstrap_haproxy.yml"

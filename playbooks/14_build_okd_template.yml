@@ -1,0 +1,40 @@
+---
+- name: Build the OKD vSphere template from the FCOS OVA
+  hosts: ansible
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Download the FCOS OVA from MinIO
+      ansible.builtin.include_role:
+        name: minio_artifact
+      vars:
+        minio_artifact_bucket: "{{ artifact_repository.fcos_ova.bucket }}"
+        minio_artifact_object: "{{ artifact_repository.fcos_ova.object }}"
+        minio_artifact_destination: "{{ artifact_repository.fcos_ova.destination }}"
+        minio_artifact_checksum: "{{ artifact_repository.fcos_ova.checksum }}"
+
+    - name: Verify govc is installed
+      ansible.builtin.command: govc version
+      changed_when: false
+
+  tasks:
+    - name: Import the FCOS OVA and create the OKD template
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ packer_automation.remote_root }}/okd-template/build_ova_template.sh"
+      environment:
+        GOVC_URL: "{{ infrastructure.vcenter.hostname }}"
+        GOVC_USERNAME: "{{ vcenter_username }}"
+        GOVC_PASSWORD: "{{ vcenter_password }}"
+        GOVC_INSECURE: "true"
+        GOVC_DATACENTER: "{{ infrastructure.vcenter.datacenter_name }}"
+        DATASTORE: "{{ infrastructure.esxi[0].datastore }}"
+        NETWORK_NAME: "{{ infrastructure.vcenter.networks.vm_network.name }}"
+        OVA_LOCAL_PATH: "{{ artifact_repository.fcos_ova.destination }}"
+        IMPORT_VM_NAME: "{{ packer_automation.okd_import_vm_name }}"
+        TEMPLATE_NAME: "{{ packer_automation.okd_template_name }}"
+        VM_FOLDER: "{{ packer_automation.vm_folder }}"
+      register: okd_template_build
+      changed_when: "'created template' in (okd_template_build.stdout | lower)"
+      no_log: "{{ not (vmware_debug | default(false) | bool) }}"

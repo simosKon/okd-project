@@ -1,0 +1,31 @@
+---
+artifact_repository:
+  endpoint: "http://192.168.1.170:9000"
+  root_dir: "/opt/okd/artifacts"
+  mc_binary: "/opt/okd/tools/mc"
+  mc_download_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+
+  vcsa_ova:
+    bucket: "ova"
+    object: "vmware-vcsa-8.0.1.00000-21560480_OVF10.ova"
+    destination: "/opt/okd/artifacts/ova/vmware-vcsa-8.0.1.00000-21560480_OVF10.ova"
+    checksum: ""
+
+  fcos_ova:
+    bucket: "ova"
+    object: "fedora-coreos-39.20231101.3.0-vmware.x86_64.ova"
+    destination: "/opt/okd/artifacts/ova/fedora-coreos-39.20231101.3.0-vmware.x86_64.ova"
+    checksum: ""
+
+  rhel_iso:
+    bucket: "iso"
+    object: "rhel-9.4-x86_64-dvd.iso"
+    destination: "/opt/okd/artifacts/iso/rhel-9.4-x86_64-dvd.iso"
+    checksum: ""
+
+packer_automation:
+  remote_root: "/opt/okd/packer"
+  vm_folder: "OKD"
+  okd_import_vm_name: "fedora-coreos-39.20231101.3.0-import"
+  okd_template_name: "fedora-coreos-39.20231101.3.0"
+  rhel_iso_datastore_path: "ISO/rhel-9.4-x86_64-dvd.iso"

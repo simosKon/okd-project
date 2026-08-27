@@ -1,0 +1,17 @@
+---
+- name: Synchronize Packer automation to the persistent installer host
+  hosts: ansible
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Ensure persistent Packer directory exists
+      ansible.builtin.file:
+        path: "{{ packer_automation.remote_root }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy tracked Packer automation from the AWX project
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../packer/"
+        dest: "{{ packer_automation.remote_root }}/"
+        mode: preserve
